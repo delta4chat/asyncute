@@ -5,8 +5,6 @@ use core::mem::ManuallyDrop;
 #[derive(Debug)]
 pub struct Defer<F: FnMut()> {
     f: Option<ManuallyDrop<F>>,
-
-    _not_send_sync_unpin: PhantomNonSendSyncUnpin,
 }
 
 impl<F: FnMut()> Defer<F> {
@@ -14,7 +12,6 @@ impl<F: FnMut()> Defer<F> {
     pub const fn new(f: F) -> Self {
         Self {
             f: Some(ManuallyDrop::new(f)),
-            _not_send_sync_unpin: PhantomData,
         }
     }
 
