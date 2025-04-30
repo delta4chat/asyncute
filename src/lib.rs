@@ -131,7 +131,7 @@ pub enum ExecutorSpawnPolicy {
     /// * Responsiveness: Limited by fixed capacity — may queue tasks if concurrency demand exceeds the fixed thread pool.
     /// * Suitable Scenarios: Environments with stable, well-known concurrency requirements or strict resource constraints.
     ///
-    /// NOTE: please do not to use this doing blocking I/O.
+    /// NOTE: please do not use this to doing blocking I/O.
     Fixed = Self::FIXED,
 }
 
@@ -527,27 +527,25 @@ pub const MONITOR_INTERVAL_MAX: Duration = Duration::new(10, 0);
 
 static MONITOR_INTERVAL: AtomicDuration = AtomicDuration::new_with_trace(3, 0);
 
+/// get monitor interval
 #[inline(always)]
 pub fn get_monitor_interval() -> Duration {
     MONITOR_INTERVAL.get()
 }
 
+/// set monitor "sleep" interval for `std::thread::park_timeout`
+/// interval seconds must in range `1..=10`
 #[inline(always)]
 pub fn set_monitor_interval(mut interval: Duration) -> Duration {
-    if interval < MONITOR_INTERVAL_MIN {
-        interval = MONITOR_INTERVAL_MIN;
-    }
-    if interval > MONITOR_INTERVAL_MAX {
-        interval = MONITOR_INTERVAL_MAX;
-    }
-
+    interval = interval.clamp(MONITOR_INTERVAL_MIN, MONITOR_INTERVAL_MAX);
     MONITOR_INTERVAL.set(interval);
     interval
 }
 
 #[inline(always)]
 fn monitor_loop() {
-    std::thread::park(); // for avoid monitor thread exit unexpectedly if before set Atom.
+    // for prevent monitor thread exit unexpectedly if before set Atom.
+    std::thread::park_timeout(Duration::from_secs(15));
 
     let current_thread_id = std::thread::current().id();
 
@@ -586,6 +584,7 @@ fn monitor_loop() {
     }
 }
 
+/// Check whether the monitor is running normally.
 #[inline(always)]
 pub fn is_monitor_running() -> bool {
     if let Some(jh) = MONITOR_THREAD_JH.get() {
@@ -593,6 +592,19 @@ pub fn is_monitor_running() -> bool {
     } else {
         false
     }
+}
+
+/// wake the monitor manually.
+#[inline(always)]
+pub fn wake_monitor() -> bool {
+    if let Some(jh) = MONITOR_THREAD_JH.get() {
+        if ! jh.is_finished() {
+            jh.thread().unpark();
+            return true;
+        }
+    }
+
+    false
 }
 
 /// start monitor if it is not exists or exited.
@@ -635,7 +647,7 @@ pub fn scheduler(
 
     let tx = get_runinfo_tx();
 
-    if tx.len() > 100 {
+    if tx.len() > 100 || ExecutorConfig::global().spawn_policy().is_proactive() {
         if let Some(jh) = MONITOR_THREAD_JH.get() {
             jh.thread().unpark();
         }
