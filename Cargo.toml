@@ -1,6 +1,6 @@
 [package]
 name = "asyncute"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "asyncute (async execute) can execute async futures globally without per-executor queues."
 license = "GPL-3.0"
