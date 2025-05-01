@@ -2,6 +2,17 @@ use crate::*;
 
 use std::time::Instant;
 
+#[test]
+fn idrs_gen() {
+    let a = id::ID::new(0x90_ab_cd_ef_01_02_03_04).unwrap();
+    let b = id::ID::auto_ns();
+    for _ in 0..10 {
+        eprintln!("{:x} (ID::new)", a.generate().unwrap());
+        eprintln!("{:x} (ID::auto_ns)", b.generate().unwrap());
+        eprintln!("{:x} (EXECUTOR_ID)", id::gen_executor_id().unwrap());
+    }
+}
+
 #[inline(always)]
 fn startup() {
     use once_cell::sync::Lazy;

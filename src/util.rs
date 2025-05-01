@@ -37,6 +37,82 @@ pub type PhantomNonSendUnpin = PhantomData<(PhantomNonSend, PhantomPinned)>;
 pub type PhantomNonSyncUnpin = PhantomData<(PhantomNonSync, PhantomPinned)>;
 pub type PhantomNonSendSyncUnpin = PhantomData<(PhantomNonSendSync, PhantomPinned)>;
 
+#[macro_export]
+macro_rules! option_try {
+    ($c:expr) => {
+        match $c {
+            Some(v) => v,
+            _ => {
+                return None;
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! option_unwrap {
+    ($c:expr) => {
+        match $c {
+            Some(v) => v,
+            _ => {
+                panic!("called `Option::unwrap()` on a `None` value!");
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! result_try {
+    ($c:expr) => {
+        match $c {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! result_unwrap {
+    ($c:expr) => {
+        match $c {
+            Ok(v) => v,
+            _ => {
+                panic!("called `Result::unwrap()` on an `Err` value!");
+            }
+        }
+    }
+}
+
+pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) -> Option<[T; N]> {
+    if N == 0 {
+        return None;
+    }
+
+    let slice_len = slice.len();
+
+    if slice_len < N {
+        return None;
+    }
+    if slice_len < start {
+        return None;
+    }
+    if (slice_len - start) < N {
+        return None;
+    }
+
+    let mut out = [slice[0]; N];
+    let mut i = start;
+    let mut ii = 0;
+    while ii < N {
+        out[ii] = slice[i];
+        i += 1;
+        ii += 1;
+    }
+    Some(out)
+}
+
 #[derive(Debug)]
 pub struct AtomicDuration {
     total_ns: AtomicU128,
