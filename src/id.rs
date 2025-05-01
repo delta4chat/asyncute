@@ -64,6 +64,9 @@ impl ID {
     /// * current UNIX timestamp and monotonic timestamp.
     /// * sleep jitter.
     pub fn auto_ns() -> Self {
+        // NonClone is not derived Copy or Clone trait, so it's unclonable.
+        struct NonClone(u8);
+
         static SEED: u128 = 36737317109501180927066999484774518054;
         const ZERO_DUR: Duration = Duration::new(0, 0);
 
@@ -77,12 +80,16 @@ impl ID {
         core::ptr::addr_of!(SEED).hash(&mut h); // static address
         core::ptr::addr_of!(h).hash(&mut h); // runtime address
         loop {
-            Box::into_raw(Box::new(())).hash(&mut h); // heap alloc address
+            (Box::new(NonClone(123)).as_ref() as *const NonClone).hash(&mut h); // heap alloc address
+
             SystemTime::now().hash(&mut h);
+
             t = Instant::now();
             t.hash(&mut h);
+
             std::thread::sleep(ZERO_DUR);
             std::thread::park_timeout(ZERO_DUR);
+
             t.elapsed().hash(&mut h);
 
             ns = h.finish();
