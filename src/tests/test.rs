@@ -3,6 +3,11 @@ use crate::*;
 use std::time::Instant;
 
 #[test]
+fn hack_zero_instant() {
+    dbg!(hack::instant_zero());
+}
+
+#[test]
 fn idrs_gen() {
     let a = id::ID::new(0x90_ab_cd_ef_01_02_03_04).unwrap();
     let b = id::ID::auto_ns();

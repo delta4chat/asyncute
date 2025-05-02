@@ -15,7 +15,10 @@ pub mod id;
 #[cfg(test)]
 mod tests;
 
-use core::future::Future;
+use core::{
+    future::Future,
+    ops::Range,
+};
 
 use std::{
     sync::Arc,
@@ -29,6 +32,7 @@ use async_task::{Runnable, ScheduleInfo};
 use portable_atomic::{
     AtomicBool,
     AtomicU8,
+    AtomicU64,
     AtomicUsize,
     AtomicF64,
     Ordering::Relaxed
@@ -79,6 +83,64 @@ pub fn cpu_count() -> usize {
     count
 }
 
+struct RunnableProfile {
+    /// used time for each Runnable.run()
+    //run_took: scc2::Queue<Duration>,
+
+    /// all handled Runnable (by running it)
+    run_count: AtomicU64,
+
+    /// how many Runnable ran within one second (in average)
+    run_frequent: AtomicF64,
+
+    /// all scheduled Runnable (by queues to crossbeam-channel)
+    queue_count: AtomicU64,
+
+    /// how many Runnable queues within one second (in average)
+    queue_frequent: AtomicF64,
+}
+impl RunnableProfile {
+    pub const fn new() -> Self {
+        Self {
+            run_count: AtomicU64::new(0),
+            run_frequent: AtomicF64::new(0.0),
+
+            queue_count: AtomicU64::new(0),
+            queue_frequent: AtomicF64::new(0.0),
+        }
+    }
+}
+
+struct FutureProfile {
+    pending_count: AtomicU64,
+    ready_count: AtomicU64,
+}
+impl FutureProfile {
+    pub const fn new() -> Self {
+        Self {
+            pending_count: AtomicU64::new(0),
+            ready_count: AtomicU64::new(0),
+        }
+    }
+}
+
+struct Profile {
+    started: Instant,
+    runnable: RunnableProfile,
+    future: FutureProfile,
+}
+impl Profile {
+    pub fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            runnable: RunnableProfile::new(),
+            future: FutureProfile::new(),
+        }
+    }
+}
+
+static PROFILE: Lazy<Profile> = Lazy::new(Profile::new);
+
 #[derive(Debug)]
 pub struct ProfileConfig {
     /// whether enables profile recording?
@@ -92,6 +154,8 @@ pub struct ProfileConfig {
 }
 
 impl ProfileConfig {
+    pub const GLOBAL: &'static Self = Self::global();
+
     pub const fn global() -> &'static Self {
         static GLOBAL: ProfileConfig =
             ProfileConfig {
@@ -289,6 +353,8 @@ pub struct ExecutorConfig {
 }
 
 impl ExecutorConfig {
+    pub const GLOBAL: &'static Self = Self::global();
+
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ExecutorConfig =
@@ -347,6 +413,8 @@ pub struct Config {
 }
 
 impl Config {
+    pub const GLOBAL: &'static Self = Self::global();
+
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: Config =
@@ -356,6 +424,11 @@ impl Config {
             };
 
         &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn set_threads(&self, range: Range<usize>) -> bool {
+        self.executor.total_threads_range.set_range(range)
     }
 }
 

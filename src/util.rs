@@ -113,6 +113,181 @@ pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) 
     Some(out)
 }
 
+pub mod hack {
+    use super::*;
+
+    /// try to get the zero point of Instant.
+    pub fn instant_zero() -> Instant {
+        let t = Instant::now();
+        t - instant_to_duration(t)
+    }
+
+    /// try to get internal value of Instant.
+    #[inline(always)]
+    pub fn instant_to_duration(mut t: Instant) -> Duration {
+        // method 1: try to dump the internal value.
+        let mut dh = DumpHasher::new();
+
+        use core::hash::Hash;
+        t.hash(&mut dh);
+
+        let dh = dh.data();
+        if dh.len() == 2 {
+            use HashWrite::*;
+            if let I64(secs) = dh[0] {
+                if let U32(subsec_nanos) = dh[1] {
+                    if secs >= 0 {
+                        #[cfg(test)]
+                        dbg!(dh, t);
+
+                        return Duration::new(secs as u64, subsec_nanos);
+                    }
+                }
+            }
+        }
+
+        // method 1 fails.
+        // try doing method 2: sub to zero.
+        let mut val = Duration::new(0, 0);
+        let mut d = Duration::new(1, 0);
+        let mut errs = 0;
+
+        const L: Duration = Duration::new(0, 1);
+        while errs < 100000 {
+            if let Some(v) = t.checked_sub(d) {
+                if ! format!("{v:?}").contains('-') {
+                    t = v;
+                    val += d;
+                    d *= 3;
+                    continue;
+                }
+            }
+
+            if d <= L {
+                break;
+            }
+
+            errs += 1;
+            d /= 2;
+        }
+
+        #[cfg(test)]
+        dbg!(val, t, d, errs);
+
+        val
+    }
+}
+
+macro_rules! gen_hash_write {
+    ($($v:ident = $t:ty,)*) => {
+        #[derive(Debug, Clone)]
+        #[repr(u8)]
+        pub enum HashWrite {
+            $(
+                $v($t),
+            )*
+        }
+
+        $(
+            impl From<$t> for HashWrite {
+                fn from(val: $t) -> HashWrite {
+                    HashWrite::$v(val)
+                }
+            }
+
+            impl TryFrom<HashWrite> for $t {
+                type Error = HashWrite;
+
+                fn try_from(val: HashWrite) -> Result<$t, HashWrite> {
+                    match val {
+                        HashWrite::$v(inner) => {
+                            Ok(inner)
+                        },
+                        other => {
+                            Err(other)
+                        }
+                    }
+                }
+            }
+        )*
+
+        impl From<&[u8]> for HashWrite {
+            fn from(val: &[u8]) -> HashWrite {
+                HashWrite::Bytes(val.to_vec())
+            }
+        }
+    }
+}
+
+gen_hash_write!(
+    Bytes = Vec<u8>,
+
+    U8    = u8,
+    U16   = u16,
+    U32   = u32,
+    U64   = u64,
+    U128  = u128,
+    Usize = usize,
+
+    I8    = i8,
+    I16   = i16,
+    I32   = i32,
+    I64   = i64,
+    I128  = i128,
+    Isize = isize,
+);
+
+#[derive(Debug, Clone)]
+pub struct DumpHasher {
+    data: Vec<HashWrite>,
+}
+
+impl DumpHasher {
+    pub const fn new() -> Self {
+        Self {
+            data: Vec::new(),
+        }
+    }
+
+    pub const fn data<'a>(&'a self) -> &'a Vec<HashWrite> {
+        &(self.data)
+    }
+}
+
+macro_rules! dump_hasher_impl {
+    ($($n:ident = $t:ty,)*) => {
+        impl core::hash::Hasher for DumpHasher {
+            fn finish(&self) -> u64 {
+                0
+            }
+
+            $(
+                fn $n(&mut self, val: $t) {
+                    self.data.push(val.into());
+                }
+            )*
+        }
+    }
+}
+
+dump_hasher_impl!(
+    write       = &[u8],
+
+    write_u8    = u8,
+    write_u16   = u16,
+    write_u32   = u32,
+    write_u64   = u64,
+    write_u128  = u128,
+    write_usize = usize,
+
+    write_i8    = i8,
+    write_i16   = i16,
+    write_i32   = i32,
+    write_i64   = i64,
+    write_i128  = i128,
+    write_isize = isize,
+);
+
 #[derive(Debug)]
 pub struct AtomicDuration {
     total_ns: AtomicU128,
