@@ -120,6 +120,7 @@ impl ID {
         core::ptr::addr_of!(SEED).hash(&mut h); // static address
         core::ptr::addr_of!(h).hash(&mut h); // runtime address
         loop {
+            #[allow(unused_allocation)]
             (Box::new(NonClone(123)).as_ref() as *const NonClone).hash(&mut h); // heap alloc address
 
             SystemTime::now().hash(&mut h);

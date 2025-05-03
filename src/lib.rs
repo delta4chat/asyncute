@@ -287,7 +287,7 @@ impl ExecutorSpawnPolicy {
                 if let Some(state) = EXECUTOR_INDEX.peek(&id, &g) {
                     assert!(state.exitable);
                     log::info!("request {id} to exit (it exceeds the limit of temporary executors)");
-                    state.exit();
+                    state.exit().unwrap();
                 }
             }
             return false;

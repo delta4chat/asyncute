@@ -3,6 +3,17 @@ use crate::*;
 use std::time::Instant;
 
 #[test]
+fn atomic_instant() {
+    let a = dbg!(AtomicInstant::now());
+    dbg!(a.add(Duration::from_secs(1)));
+    dbg!(a.get());
+    dbg!(a.sub(Duration::from_secs(2)));
+    dbg!(a.get());
+    dbg!(a.set(dbg!(Instant::now())));
+    dbg!(a.get());
+}
+
+#[test]
 fn hack_zero_instant() {
     dbg!(hack::instant_zero());
 }

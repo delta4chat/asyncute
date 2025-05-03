@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
 };
 
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 
 use portable_atomic::{
     AtomicBool,
@@ -406,7 +406,16 @@ impl AtomicDuration {
 
     #[inline(always)]
     pub fn add(&self, d: Duration) -> &Self {
-        self.total_ns.fetch_add(d.as_nanos(), Relaxed);
+        self.total_ns.add(d.as_nanos(), Relaxed);
+        if let Some(ref changed) = self.changed {
+            changed.store(true, Relaxed);
+        }
+        self
+    }
+
+    #[inline(always)]
+    pub fn sub(&self, d: Duration) -> &Self {
+        self.total_ns.sub(d.as_nanos(), Relaxed);
         if let Some(ref changed) = self.changed {
             changed.store(true, Relaxed);
         }
@@ -440,6 +449,176 @@ impl AtomicDuration {
         } else {
             panic!("trace change is not enabled!");
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct AtomicInstant {
+    anchor: OnceCell<Instant>,
+    offset: AtomicDuration,
+    op: AtomicU8,
+}
+
+impl AtomicInstant {
+    pub const OP_NOP:     u8 = b'=';
+    pub const OP_ADD:     u8 = b'+';
+    pub const OP_SUB:     u8 = b'-';
+    pub const OP_PENDING: u8 = b'.';
+
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            anchor: OnceCell::new(),
+            offset: AtomicDuration::zero(),
+            op: AtomicU8::new(Self::OP_PENDING),
+        }
+    }
+
+    #[inline(always)]
+    pub fn zero() -> Self {
+        let t = hack::instant_zero();
+
+        let this = Self::new();
+        this.anchor.set(t).unwrap();
+        this.op.store(Self::OP_NOP, Relaxed);
+
+        this
+    }
+
+    #[inline(always)]
+    pub fn now() -> Self {
+        let t = Instant::now();
+
+        let this = Self::new();
+        this.anchor.set(t).unwrap();
+        this.op.store(Self::OP_NOP, Relaxed);
+
+        this
+    }
+
+    pub fn anchor(&self) -> Instant {
+        *(self.anchor.get_or_init(hack::instant_zero))
+    }
+
+    pub fn offset(&self) -> Duration {
+        self.offset.get()
+    }
+
+    pub fn op(&self) -> u8 {
+        let mut op;
+        loop {
+            op = self.op.load(Relaxed);
+            if op != Self::OP_PENDING {
+                return op;
+            }
+        }
+    }
+
+    fn op_lock(&self) -> u8 {
+        let mut op;
+        loop {
+            op = self.op.load(Relaxed);
+            if op != Self::OP_PENDING {
+                if self.op.compare_exchange(op, Self::OP_PENDING, Relaxed, Relaxed).is_ok() {
+                    return op;
+                }
+            }
+        }
+    }
+
+    pub fn set(&self, t: Instant) -> &Self {
+        self.op_lock();
+        let op;
+
+        let anchor = self.anchor();
+        if t == anchor {
+            op = Self::OP_NOP;
+        } else if t > anchor {
+            op = Self::OP_ADD;
+            self.offset.set(t - anchor);
+        } else {
+            op = Self::OP_SUB;
+            self.offset.set(anchor - t);
+        }
+        self.op.store(op, Relaxed);
+
+        self
+    }
+
+    pub fn get(&self) -> Instant {
+        let anchor = self.anchor();
+
+        let op = self.op();
+        match op {
+            Self::OP_NOP => {
+                anchor
+            },
+            Self::OP_ADD => {
+                anchor + self.offset.get()
+            },
+            Self::OP_SUB => {
+                anchor - self.offset.get()
+            },
+            _ => {
+                panic!("unexpected invalid value of self.op");
+            }
+        }
+    }
+
+    pub fn add(&self, d: Duration) -> &Self {
+        let mut op = self.op_lock();
+        match op {
+            Self::OP_ADD => {
+                self.offset.add(d);
+            },
+            Self::OP_SUB => {
+                let pd = self.offset.get();
+                if pd >= d {
+                    self.offset.sub(d);
+                } else {
+                    op = Self::OP_ADD;
+                    self.offset.set(d - pd);
+                }
+            },
+            Self::OP_NOP => {
+                op = Self::OP_ADD;
+                self.offset.set(d);
+            },
+            _ => {
+                panic!("unexpected invalid value of self.op");
+            }
+        }
+        self.op.store(op, Relaxed);
+
+        self
+    }
+
+    pub fn sub(&self, d: Duration) -> &Self {
+        let mut op = self.op_lock();
+        match op {
+            Self::OP_ADD => {
+                let pd = self.offset.get();
+                if pd >= d {
+                    self.offset.sub(d);
+                } else {
+                    op = Self::OP_SUB;
+                    self.offset.set(d - pd);
+                }
+            },
+            Self::OP_SUB => {
+                self.offset.add(d);
+            },
+            Self::OP_NOP => {
+                op = Self::OP_SUB;
+                self.offset.set(d);
+            },
+            _ => {
+                panic!("unexpected invalid value of self.op");
+            }
+        }
+        self.op.store(op, Relaxed);
+
+        self
     }
 }
 
@@ -554,7 +733,7 @@ impl AtomicIpAddr {
 
     #[inline(always)]
     const fn ip2tuple(ip: IpAddr) -> (u8, u128) {
-        let mut kind;
+        let kind;
         let mut data;
         match ip {
             IpAddr::V4(ip4) => {
