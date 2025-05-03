@@ -124,26 +124,47 @@ pub mod hack {
 
     /// try to get internal value of Instant.
     #[inline(always)]
-    pub fn instant_to_duration(mut t: Instant) -> Duration {
+    pub fn instant_to_duration(t: Instant) -> Duration {
         // method 1: try to dump the internal value.
-        let mut dh = DumpHasher::new();
+        for _ in core::iter::once(()) {
+            let mut dh = DumpHasher::new();
 
-        use core::hash::Hash;
-        t.hash(&mut dh);
+            use core::hash::Hash;
+            t.hash(&mut dh);
 
-        let dh = dh.data();
-        if dh.len() == 2 {
+            let dh = dh.data();
+
             use HashWrite::*;
-            if let I64(secs) = dh[0] {
-                if let U32(subsec_nanos) = dh[1] {
-                    if secs >= 0 {
+            match dh.len() {
+                2 => {
+                    let secs =
+                        match dh[0] {
+                            U64(v) => v,
+                            I64(v) => {
+                                if v >= 0 {
+                                    v as u64
+                                } else {
+                                    break;
+                                }
+                            },
+                            _ => {
+                                break;
+                            }
+                        };
+
+                    if let U32(subsec_nanos) = dh[1] {
                         #[cfg(test)]
-                        dbg!(dh, t);
+                        dbg!(_="instant_to_duration method 1", dh, t);
 
                         return Duration::new(secs as u64, subsec_nanos);
                     }
+                },
+                _ => {
+                    break;
                 }
             }
+
+            break;
         }
 
         // method 1 fails.
@@ -152,11 +173,12 @@ pub mod hack {
         let mut d = Duration::new(1, 0);
         let mut errs = 0;
 
+        let mut tmp = t;
         const L: Duration = Duration::new(0, 1);
         while errs < 100000 {
-            if let Some(v) = t.checked_sub(d) {
+            if let Some(v) = tmp.checked_sub(d) {
                 if ! format!("{v:?}").contains('-') {
-                    t = v;
+                    tmp = v;
                     val += d;
                     d *= 3;
                     continue;
@@ -172,7 +194,7 @@ pub mod hack {
         }
 
         #[cfg(test)]
-        dbg!(val, t, d, errs);
+        dbg!(_="instant_to_duration method 2", val, t, d, errs);
 
         val
     }

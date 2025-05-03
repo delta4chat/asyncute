@@ -154,8 +154,6 @@ pub struct ProfileConfig {
 }
 
 impl ProfileConfig {
-    pub const GLOBAL: &'static Self = Self::global();
-
     pub const fn global() -> &'static Self {
         static GLOBAL: ProfileConfig =
             ProfileConfig {
@@ -353,8 +351,6 @@ pub struct ExecutorConfig {
 }
 
 impl ExecutorConfig {
-    pub const GLOBAL: &'static Self = Self::global();
-
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ExecutorConfig =
@@ -413,8 +409,6 @@ pub struct Config {
 }
 
 impl Config {
-    pub const GLOBAL: &'static Self = Self::global();
-
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: Config =
