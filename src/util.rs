@@ -336,7 +336,7 @@ pub mod hack {
                         #[cfg(test)]
                         dbg!(_="instant_to_duration method 1", dh, t);
 
-                        return Duration::new(secs as u64, subsec_nanos);
+                        return Duration::new(secs, subsec_nanos);
                     }
                 },
                 _ => {

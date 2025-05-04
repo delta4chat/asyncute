@@ -489,6 +489,40 @@ impl ExecutorConfig {
     }
 }
 
+#[derive(Debug)]
+pub struct MonitorConfig {
+    interval: AtomicDuration,
+}
+
+impl MonitorConfig {
+    pub const INTERVAL_MIN: Duration = Duration::new(1, 0);
+    pub const INTERVAL_MAX: Duration = Duration::new(10, 0);
+
+    #[inline(always)]
+    pub const fn global() -> &'static Self {
+        static GLOBAL: MonitorConfig =
+            MonitorConfig {
+                interval: AtomicDuration::new_with_trace(3, 0),
+            };
+
+        &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn interval(&self) -> Duration {
+        self.interval.get()
+    }
+
+    /// set monitor "sleep" interval for `std::thread::park_timeout`
+    /// interval seconds must in range `1..=10`
+    #[inline(always)]
+    pub fn set_interval(&self, mut interval: Duration) -> Duration {
+        interval = interval.clamp(Self::INTERVAL_MIN, Self::INTERVAL_MAX);
+        self.interval.set(interval);
+        interval
+    }
+}
+
 /// The Configuration of Asyncute.
 #[derive(Debug)]
 pub struct Config {
@@ -497,6 +531,9 @@ pub struct Config {
 
     /// Executor Configuration.
     pub executor: &'static ExecutorConfig,
+
+    /// Monitor Configuration.
+    pub monitor: &'static MonitorConfig,
 }
 
 impl Config {
@@ -506,6 +543,7 @@ impl Config {
             Config {
                 profile: ProfileConfig::global(),
                 executor: ExecutorConfig::global(),
+                monitor: MonitorConfig::global(),
             };
 
         &GLOBAL
@@ -682,24 +720,25 @@ pub fn spawn_executor(exitable: bool) {
     std::thread::park_timeout(Duration::from_secs(3));
 }
 
-pub const MONITOR_INTERVAL_MIN: Duration = Duration::new(1, 0);
-pub const MONITOR_INTERVAL_MAX: Duration = Duration::new(10, 0);
-
-static MONITOR_INTERVAL: AtomicDuration = AtomicDuration::new_with_trace(3, 0);
-
+/// # Deprecated
+/// please use `Config::global().monitor.interval()` instead.
+///
 /// get monitor interval
 #[inline(always)]
+#[deprecated(since="0.0.3", note="please use `Config::global().monitor.interval()` instead.")]
 pub fn get_monitor_interval() -> Duration {
-    MONITOR_INTERVAL.get()
+    MonitorConfig::global().interval()
 }
 
+/// # Deprecated
+/// please use `Config::global().monitor.set_interval()` instead.
+///
 /// set monitor "sleep" interval for `std::thread::park_timeout`
 /// interval seconds must in range `1..=10`
 #[inline(always)]
-pub fn set_monitor_interval(mut interval: Duration) -> Duration {
-    interval = interval.clamp(MONITOR_INTERVAL_MIN, MONITOR_INTERVAL_MAX);
-    MONITOR_INTERVAL.set(interval);
-    interval
+#[deprecated(since="0.0.3", note="please use `Config::global().monitor.set_interval()` instead.")]
+pub fn set_monitor_interval(interval: Duration) -> Duration {
+    MonitorConfig::global().set_interval(interval)
 }
 
 #[inline(always)]
@@ -711,12 +750,12 @@ fn monitor_loop() {
 
     let mut status = ExecutorStatus::new();
     let cpus: usize = cpu_count();
-    let mut interval = MONITOR_INTERVAL.get();
 
     let config = Config::global();
+    let mut interval = config.monitor.interval();
     loop {
-        if MONITOR_INTERVAL.changed() {
-            interval = MONITOR_INTERVAL.get();
+        if config.monitor.interval.changed() {
+            interval = config.monitor.interval();
         }
 
         if let Some(jh) = MONITOR_THREAD_JH.get() {
