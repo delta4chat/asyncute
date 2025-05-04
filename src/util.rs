@@ -17,13 +17,7 @@ use std::{
 use once_cell::sync::{Lazy, OnceCell};
 
 use portable_atomic::{
-    AtomicBool,
-    AtomicU8,
-    AtomicU16,
-    AtomicU32,
-    AtomicUsize,
-    AtomicU64,
-    AtomicU128,
+    *,
     Ordering::Relaxed,
 };
 
@@ -85,12 +79,198 @@ macro_rules! result_unwrap {
     }
 }
 
+macro_rules! gen_atomic_checked {
+    ($($op:ident,)*) => {
+        pub trait AtomicChecked {
+            type Item;
+
+            $(
+                fn $op(&self, val: Self::Item) -> Option<Self::Item>;
+            )*
+        }
+
+        // helper trait for float numbers
+        trait Checked: Sized {
+            $(
+                fn $op(self, val: Self) -> Option<Self>;
+            )*
+        }
+
+        checked_float_impls!(f32 = $($op,)*);
+        checked_float_impls!(f64 = $($op,)*);
+    }
+}
+
+macro_rules! checked_float_impls {
+    ($name:ident = $($op:ident,)*) => {
+        impl Checked for $name {
+            $(
+                fn $op(self, val: Self) -> Option<Self> {
+                    const OP: &'static str = stringify!($op);
+
+                    const IS_ADD: bool = str_eq(OP, "checked_add");
+                    const IS_SUB: bool = str_eq(OP, "checked_sub");
+                    const IS_MUL: bool = str_eq(OP, "checked_mul");
+                    const IS_DIV: bool = str_eq(OP, "checked_div");
+                    const IS_REM: bool = str_eq(OP, "checked_rem");
+
+                    if self.is_nan() || val.is_nan() {
+                        return None;
+                    }
+                    if self.is_infinite() || val.is_infinite() {
+                        return None;
+                    }
+
+                    let res =
+                        if IS_ADD {
+                            self + val
+                        } else if IS_SUB {
+                            self - val
+                        } else if IS_MUL {
+                            self * val
+                        } else if IS_DIV {
+                            if val.is_zero() {
+                                return None;
+                            }
+                            self / val
+                        } else if IS_REM {
+                            if val.is_zero() {
+                                return None;
+                            }
+                            self % val
+                        } else {
+                            unreachable!();
+                        };
+
+                    if res.is_infinite() || res.is_nan() {
+                        return None;
+                    }
+
+                    Some(res)
+                }
+            )*
+        }
+    }
+}
+
+gen_atomic_checked!(
+    checked_add,
+    checked_sub,
+    checked_mul,
+    checked_div,
+    checked_rem,
+);
+
+macro_rules! atomic_checked_impl {
+    ($atom:ident, $t:ident = $($op:ident,)*) => {
+        impl AtomicChecked for $atom {
+            type Item = $t;
+
+            $(
+                fn $op(&self, val: $t) -> Option<$t> {
+                    const ZERO: $t = 0u8 as $t;
+
+                    const OP: &'static str = stringify!($op);
+
+                    const IS_ADD_OR_SUB: bool = str_eq(OP, "checked_add") || str_eq(OP, "checked_sub");
+                    const IS_DIV_OR_REM: bool = str_eq(OP, "checked_div") || str_eq(OP, "checked_rem");
+                    const IS_MUL:        bool = str_eq(OP, "checked_mul");
+
+                    if val == ZERO {
+                        if IS_ADD_OR_SUB {
+                            return Some(self.load(Relaxed));
+                        }
+                        if IS_MUL {
+                            return Some(self.swap(ZERO, Relaxed));
+                        }
+                        if IS_DIV_OR_REM {
+                            return None;
+                        }
+                    }
+
+                    let mut old;
+                    let mut new;
+                    loop {
+                        old = self.load(Relaxed);
+                        new = old.$op(val)?;
+                        if self.compare_exchange(old, new, Relaxed, Relaxed).is_ok() {
+                            return Some(old);
+                        }
+                    }
+                }
+            )*
+        }
+    }
+}
+
+macro_rules! atomic_checked_impls {
+    ($($atom:ident = $t:ident,)*) => {
+        $(
+            atomic_checked_impl!(
+                $atom, $t =
+                    checked_add,
+                    checked_sub,
+                    checked_mul,
+                    checked_div,
+                    checked_rem,
+            );
+        )*
+    }
+}
+
+atomic_checked_impls!(
+    AtomicU8    = u8,
+    AtomicU16   = u16,
+    AtomicU32   = u32,
+    AtomicU64   = u64,
+    AtomicU128  = u128,
+    AtomicUsize = usize,
+
+    AtomicI8    = i8,
+    AtomicI16   = i16,
+    AtomicI32   = i32,
+    AtomicI64   = i64,
+    AtomicI128  = i128,
+    AtomicIsize = isize,
+
+    AtomicF32   = f32,
+    AtomicF64   = f64,
+);
+
+#[inline(always)]
+pub const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    let a_len = a.len();
+    if a_len != b.len() {
+        return false;
+    }
+
+    let mut i = 0;
+    while i < a_len {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+
+    true
+}
+
+#[inline(always)]
+pub const fn str_eq(a: &str, b: &str) -> bool {
+    bytes_eq(a.as_bytes(), b.as_bytes())
+}
+
+#[inline(always)]
 pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) -> Option<[T; N]> {
-    if N == 0 {
+    let slice_len = slice.len();
+
+    if slice_len == 0 {
         return None;
     }
 
-    let slice_len = slice.len();
+    if N == 0 {
+        return Some([slice[0]; N]);
+    }
 
     if slice_len < N {
         return None;
@@ -496,14 +676,22 @@ impl AtomicInstant {
         this
     }
 
+    #[inline(always)]
+    pub fn peek_anchor(&self) -> Option<Instant> {
+        self.anchor.get().copied()
+    }
+
+    #[inline(always)]
     pub fn anchor(&self) -> Instant {
         *(self.anchor.get_or_init(hack::instant_zero))
     }
 
+    #[inline(always)]
     pub fn offset(&self) -> Duration {
         self.offset.get()
     }
 
+    #[inline(always)]
     pub fn op(&self) -> u8 {
         let mut op;
         loop {
@@ -514,6 +702,7 @@ impl AtomicInstant {
         }
     }
 
+    #[inline(always)]
     fn op_lock(&self) -> u8 {
         let mut op;
         loop {
@@ -526,28 +715,39 @@ impl AtomicInstant {
         }
     }
 
+    #[inline(always)]
     pub fn set(&self, t: Instant) -> &Self {
         self.op_lock();
-        let op;
 
         let anchor = self.anchor();
-        if t == anchor {
-            op = Self::OP_NOP;
-        } else if t > anchor {
-            op = Self::OP_ADD;
-            self.offset.set(t - anchor);
-        } else {
-            op = Self::OP_SUB;
-            self.offset.set(anchor - t);
-        }
+        let op =
+            if t == anchor {
+                Self::OP_NOP
+            } else if t > anchor {
+                self.offset.set(t - anchor);
+                Self::OP_ADD
+            } else {
+                self.offset.set(anchor - t);
+                Self::OP_SUB
+            };
         self.op.store(op, Relaxed);
 
         self
     }
 
+    #[inline(always)]
     pub fn get(&self) -> Instant {
-        let anchor = self.anchor();
+        self._calc(self.anchor())
+    }
 
+    #[inline(always)]
+    pub fn peek(&self) -> Option<Instant> {
+        let anchor = self.peek_anchor()?;
+        Some(self._calc(anchor))
+    }
+
+    #[inline(always)]
+    fn _calc(&self, anchor: Instant) -> Instant {
         let op = self.op();
         match op {
             Self::OP_NOP => {
@@ -565,6 +765,7 @@ impl AtomicInstant {
         }
     }
 
+    #[inline(always)]
     pub fn add(&self, d: Duration) -> &Self {
         let mut op = self.op_lock();
         match op {
@@ -593,6 +794,7 @@ impl AtomicInstant {
         self
     }
 
+    #[inline(always)]
     pub fn sub(&self, d: Duration) -> &Self {
         let mut op = self.op_lock();
         match op {

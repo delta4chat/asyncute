@@ -141,11 +141,16 @@ impl Executor {
                     &'_ dyn std::fmt::Debug,
                     std::io::Error,
                     std::io::ErrorKind,
-                    core::panic::PanicInfo,
+                    std::panic::PanicInfo,
                     std::panic::PanicHookInfo,
                     core::panic::PanicInfo,
                 );
             }
+        }
+
+        if ProfileConfig::global().is_enabled() {
+            let rp = RunnableProfile::global();
+            rp.run_count.add(1, Relaxed);
         }
     }
 
@@ -254,22 +259,7 @@ impl Drop for Executor {
 #[inline(always)]
 pub(crate) fn gen_executor_id() -> Option<u32> {
     static COUNTER: AtomicU32 = AtomicU32::new(1);
-    let mut id;
-    loop {
-        id = COUNTER.load(Relaxed);
 
-        if id == u32::MAX {
-            return None;
-        }
-
-        if
-            COUNTER.compare_exchange(
-                id, id.checked_add(1)?,
-                Relaxed, Relaxed,
-            ).is_ok()
-        {
-            return Some(id);
-        }
-    }
+    COUNTER.checked_add(1)
 }
 

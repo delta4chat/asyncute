@@ -145,22 +145,7 @@ impl ID {
 
     #[inline(always)]
     pub fn generate(&self) -> Option<u128> {
-        let mut count;
-        loop {
-            count = self.counter.load(Relaxed);
-            if count == u64::MAX {
-                return None;
-            }
-
-            if let Ok(_) =
-                self.counter.compare_exchange(
-                    count,   count.checked_add(1)?,
-                    Relaxed, Relaxed,
-                )
-            {
-                break;
-            }
-        }
+        let count = self.counter.checked_add(1)?;
 
         Some(
             self.prefix | (count as u128)

@@ -83,63 +83,138 @@ pub fn cpu_count() -> usize {
     count
 }
 
-struct RunnableProfile {
+pub struct RunnableProfile {
+    /*
     /// used time for each Runnable.run()
-    //run_took: scc2::Queue<Duration>,
+    run_took: scc2::Queue<Duration>,
+    */
 
     /// all handled Runnable (by running it)
     run_count: AtomicU64,
 
     /// how many Runnable ran within one second (in average)
-    run_frequent: AtomicF64,
+    run_frequency: AtomicF64,
 
     /// all scheduled Runnable (by queues to crossbeam-channel)
     queue_count: AtomicU64,
 
     /// how many Runnable queues within one second (in average)
-    queue_frequent: AtomicF64,
+    queue_frequency: AtomicF64,
 }
 impl RunnableProfile {
-    pub const fn new() -> Self {
-        Self {
-            run_count: AtomicU64::new(0),
-            run_frequent: AtomicF64::new(0.0),
+    #[inline(always)]
+    pub const fn global() -> &'static Self {
+        static GLOBAL: RunnableProfile =
+            RunnableProfile {
+                run_count: AtomicU64::new(0),
+                run_frequency: AtomicF64::new(0.0),
 
-            queue_count: AtomicU64::new(0),
-            queue_frequent: AtomicF64::new(0.0),
+                queue_count: AtomicU64::new(0),
+                queue_frequency: AtomicF64::new(0.0),
+            };
+
+        &GLOBAL
+    }
+
+    /// update frequency.
+    #[inline(always)]
+    pub fn update(&self) -> bool {
+        let elapsed_secs =
+            if let Some(started) = Profile::global().started() {
+                started.elapsed().as_secs_f64()
+            } else {
+                return false;
+            };
+
+        if elapsed_secs == 0.0 {
+            self.run_frequency.store(0.0, Relaxed);
+            self.queue_frequency.store(0.0, Relaxed);
+        } else {
+            let runs = self.run_count() as f64;
+            self.run_frequency.store(runs / elapsed_secs, Relaxed);
+
+            let queues = self.queue_count() as f64;
+            self.queue_frequency.store(queues / elapsed_secs, Relaxed);
         }
+
+        true
+    }
+
+    #[inline(always)]
+    pub fn run_count(&self) -> u64 {
+        self.run_count.load(Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn run_frequency(&self) -> f64 {
+        self.run_frequency.load(Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn queue_count(&self) -> u64 {
+        self.queue_count.load(Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn queue_frequency(&self) -> f64 {
+        self.queue_frequency.load(Relaxed)
     }
 }
 
-struct FutureProfile {
+pub struct FutureProfile {
     pending_count: AtomicU64,
     ready_count: AtomicU64,
 }
 impl FutureProfile {
-    pub const fn new() -> Self {
-        Self {
-            pending_count: AtomicU64::new(0),
-            ready_count: AtomicU64::new(0),
-        }
+    #[inline(always)]
+    pub const fn global() -> &'static Self {
+        static GLOBAL: FutureProfile =
+            FutureProfile {
+                pending_count: AtomicU64::new(0),
+                ready_count: AtomicU64::new(0),
+            };
+
+        &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn pending_count(&self) -> u64 {
+        self.pending_count.load(Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn ready_count(&self) -> u64 {
+        self.ready_count.load(Relaxed)
     }
 }
 
-struct Profile {
-    started: Instant,
-    runnable: RunnableProfile,
-    future: FutureProfile,
+pub struct Profile {
+    started: AtomicInstant,
+    pub runnable: &'static RunnableProfile,
+    pub future: &'static FutureProfile,
 }
 impl Profile {
-    pub fn new() -> Self {
-        Self {
-            started: Instant::now(),
-            runnable: RunnableProfile::new(),
-            future: FutureProfile::new(),
+    #[inline(always)]
+    pub const fn global() -> &'static Self {
+        static GLOBAL: Profile =
+            Profile {
+                started: AtomicInstant::new(),
+                runnable: RunnableProfile::global(),
+                future: FutureProfile::global(),
+            };
+
+        &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn started(&self) -> Option<Instant> {
+        if ProfileConfig::global().is_enabled() {
+            self.started.peek()
+        } else {
+            None
         }
     }
 }
-
-static PROFILE: Lazy<Profile> = Lazy::new(Profile::new);
 
 #[derive(Debug)]
 pub struct ProfileConfig {
@@ -149,11 +224,10 @@ pub struct ProfileConfig {
     /// output UDP socket peer of recorded profiles.
     ///
     /// for interval 10 seconds, if "the port is zero" then prints to stderr, otherwise it will sends datagram to provided SocketAddr and not to print.
-    ///
     pub remote: AtomicSocketAddr,
 }
-
 impl ProfileConfig {
+    #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ProfileConfig =
             ProfileConfig {
@@ -162,6 +236,21 @@ impl ProfileConfig {
             };
 
         &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn enable(&self) {
+        self.enabled.store(true, Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn disable(&self) {
+        self.enabled.store(false, Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Relaxed)
     }
 }
 
@@ -293,9 +382,11 @@ impl ExecutorSpawnPolicy {
             return false;
         }
 
+        let overload_threshold = ExecutorConfig::global().overload_threshold.load(Relaxed);
+
         let mut all_overload = true;
         for (id, load) in status.work_load.iter() {
-            if (*load) < 0.9 {
+            if (*load) < overload_threshold {
                 all_overload = false;
             } else {
                 log::warn!("executor {id} is overloading: {load}");
@@ -716,17 +807,22 @@ pub fn scheduler(
 
     let tx = get_runinfo_tx();
 
+    tx.send(RunInfo { runnable, info })
+      .expect("unable to send Runnable to executors: channel closed");
+
+    #[cfg(test)]
+    log::trace!("scheduler sent. tx.len()={}", tx.len());
+
     if tx.len() > 100 || ExecutorConfig::global().spawn_policy().is_proactive() {
         if let Some(jh) = MONITOR_THREAD_JH.get() {
             jh.thread().unpark();
         }
     }
 
-    tx.send(RunInfo { runnable, info })
-      .expect("unable to send Runnable to executors: channel closed");
-
-    #[cfg(test)]
-    log::trace!("scheduler sent. tx.len()={}", tx.len());
+    if ProfileConfig::global().is_enabled() {
+        let rp = RunnableProfile::global();
+        rp.queue_count.add(1, Relaxed);
+    }
 }
 
 const SCHEDULER: async_task::WithInfo<fn(Runnable, ScheduleInfo)> = async_task::WithInfo(scheduler);
