@@ -641,13 +641,10 @@ pub struct AtomicInstant {
 }
 
 impl AtomicInstant {
-    pub const OP_NOP:       u8 = b'=';
-    pub const OP_ADD:       u8 = b'+';
-    pub const OP_SUB:       u8 = b'-';
-    pub const OP_PENDING:   u8 = b'.';
-
-    pub const OP_INIT_ZERO: u8 = b'0';
-    pub const OP_INIT_NOW:  u8 = b'n';
+    pub const OP_NOP:     u8 = b'=';
+    pub const OP_ADD:     u8 = b'+';
+    pub const OP_SUB:     u8 = b'-';
+    pub const OP_PENDING: u8 = b'.';
 
     #[inline(always)]
     pub const fn init() -> Self {
