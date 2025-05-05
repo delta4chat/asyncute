@@ -84,6 +84,8 @@ pub fn cpu_count() -> usize {
 }
 
 pub struct RunnableProfile {
+    last_update: AtomicInstant,
+
     /*
     /// used time for each Runnable.run()
     run_took: scc2::Queue<Duration>,
@@ -102,10 +104,14 @@ pub struct RunnableProfile {
     queue_frequency: AtomicF64,
 }
 impl RunnableProfile {
+    pub const UPDATE_INTERVAL: Duration = Duration::new(5, 0);
+
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: RunnableProfile =
             RunnableProfile {
+                last_update: AtomicInstant::init(),
+
                 run_count: AtomicU64::new(0),
                 run_frequency: AtomicF64::new(0.0),
 
@@ -125,6 +131,11 @@ impl RunnableProfile {
             } else {
                 return false;
             };
+
+        if self.last_update.get().elapsed() < Self::UPDATE_INTERVAL {
+            return false;
+        }
+        self.last_update.set(Instant::now());
 
         if elapsed_secs == 0.0 {
             self.run_frequency.store(0.0, Relaxed);
@@ -198,7 +209,7 @@ impl Profile {
     pub const fn global() -> &'static Self {
         static GLOBAL: Profile =
             Profile {
-                started: AtomicInstant::new(),
+                started: AtomicInstant::init_now(),
                 runnable: RunnableProfile::global(),
                 future: FutureProfile::global(),
             };
@@ -779,6 +790,10 @@ fn monitor_loop() {
 
         config.executor.spawn_policy().spawn_temporary_executor(&status);
 
+        if ProfileConfig::global().is_enabled() {
+            RunnableProfile::global().update();
+        }
+
         std::thread::park_timeout(interval);
     }
 }
@@ -859,8 +874,9 @@ pub fn scheduler(
     }
 
     if ProfileConfig::global().is_enabled() {
-        let rp = RunnableProfile::global();
-        rp.queue_count.add(1, Relaxed);
+        let p = Profile::global();
+        p.started();
+        p.runnable.queue_count.checked_add(1);
     }
 }
 

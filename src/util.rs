@@ -637,43 +637,49 @@ pub struct AtomicInstant {
     anchor: OnceCell<Instant>,
     offset: AtomicDuration,
     op: AtomicU8,
+    init_zero: bool,
 }
 
 impl AtomicInstant {
-    pub const OP_NOP:     u8 = b'=';
-    pub const OP_ADD:     u8 = b'+';
-    pub const OP_SUB:     u8 = b'-';
-    pub const OP_PENDING: u8 = b'.';
+    pub const OP_NOP:       u8 = b'=';
+    pub const OP_ADD:       u8 = b'+';
+    pub const OP_SUB:       u8 = b'-';
+    pub const OP_PENDING:   u8 = b'.';
+
+    pub const OP_INIT_ZERO: u8 = b'0';
+    pub const OP_INIT_NOW:  u8 = b'n';
 
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub const fn init() -> Self {
         Self {
             anchor: OnceCell::new(),
             offset: AtomicDuration::zero(),
-            op: AtomicU8::new(Self::OP_PENDING),
+            op: AtomicU8::new(Self::OP_NOP),
+            init_zero: true,
         }
+    }
+
+    pub const fn init_now() -> Self {
+        let mut this = Self::init();
+        this.init_zero = false;
+        this
+    }
+
+    #[inline(always)]
+    pub const fn new(anchor: Instant) -> Self {
+        let mut this = Self::init();
+        this.anchor = OnceCell::with_value(anchor);
+        this
     }
 
     #[inline(always)]
     pub fn zero() -> Self {
-        let t = hack::instant_zero();
-
-        let this = Self::new();
-        this.anchor.set(t).unwrap();
-        this.op.store(Self::OP_NOP, Relaxed);
-
-        this
+        Self::new(hack::instant_zero())
     }
 
     #[inline(always)]
     pub fn now() -> Self {
-        let t = Instant::now();
-
-        let this = Self::new();
-        this.anchor.set(t).unwrap();
-        this.op.store(Self::OP_NOP, Relaxed);
-
-        this
+        Self::new(Instant::now())
     }
 
     #[inline(always)]
@@ -683,7 +689,7 @@ impl AtomicInstant {
 
     #[inline(always)]
     pub fn anchor(&self) -> Instant {
-        *(self.anchor.get_or_init(hack::instant_zero))
+        *(self.anchor.get_or_init(if self.init_zero { hack::instant_zero } else { Instant::now }))
     }
 
     #[inline(always)]

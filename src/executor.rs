@@ -149,8 +149,9 @@ impl Executor {
         }
 
         if ProfileConfig::global().is_enabled() {
-            let rp = RunnableProfile::global();
-            rp.run_count.add(1, Relaxed);
+            let p = Profile::global();
+            p.started();
+            p.runnable.run_count.checked_add(1);
         }
     }
 
