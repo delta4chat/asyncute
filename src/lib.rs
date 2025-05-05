@@ -42,6 +42,8 @@ use once_cell::sync::Lazy;
 
 #[derive(Debug)]
 struct TaskInfoInner {
+    dropped: bool,
+
     id: TaskId,
     nice: i8, // TODO unimplemented
     run_count: AtomicU64,
@@ -49,12 +51,34 @@ struct TaskInfoInner {
 }
 impl TaskInfoInner {
     fn new(nice: i8) -> Self {
-        Self {
-            id: gen_task_id().expect("Task ID exhausted!"),
-            nice,
-            run_count: AtomicU64::new(0),
-            run_took: AtomicDuration::zero(),
+        let mut this =
+            Self {
+                dropped: true,
+
+                id: gen_task_id().expect("Task ID exhausted!"),
+                nice,
+                run_count: AtomicU64::new(0),
+                run_took: AtomicDuration::zero(),
+            };
+
+        if ProfileConfig::global().is_enabled() {
+            if RunnableProfile::global().alive_count.checked_add(1).is_some() {
+                this.dropped = false;
+            }
         }
+
+        this
+    }
+}
+
+impl Drop for TaskInfoInner {
+    fn drop(&mut self) {
+        if self.dropped {
+            return;
+        }
+        self.dropped = true;
+
+        RunnableProfile::global().alive_count.checked_sub(1);
     }
 }
 
@@ -127,6 +151,9 @@ pub struct RunnableProfile {
     run_took: scc2::Queue<Duration>,
     */
 
+    /// all "alive" Runnable that is not terminated.
+    alive_count: AtomicU64,
+
     /// all handled Runnable (by running it)
     run_count: AtomicU64,
 
@@ -147,6 +174,8 @@ impl RunnableProfile {
         static GLOBAL: RunnableProfile =
             RunnableProfile {
                 last_update: AtomicInstant::init(),
+
+                alive_count: AtomicU64::new(0),
 
                 run_count: AtomicU64::new(0),
                 run_frequency: AtomicF64::new(0.0),
@@ -185,6 +214,11 @@ impl RunnableProfile {
         }
 
         true
+    }
+
+    #[inline(always)]
+    pub fn alive_count(&self) -> u64 {
+        self.alive_count.load(Relaxed)
     }
 
     #[inline(always)]
