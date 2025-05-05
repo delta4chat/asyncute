@@ -155,10 +155,21 @@ impl ID {
 
 pub static GLOBAL_ID: ID = option_unwrap!(ID::_from_bytes(b"__GLOBAL"));
 pub(crate) static EXECUTOR_ID: ID = option_unwrap!(ID::_from_bytes(b"EXECUTOR"));
+pub(crate) static TASK_ID: ID = option_unwrap!(ID::_from_bytes(b"TASK ID."));
+
+#[inline(always)]
+pub fn gen_global_id() -> Option<u128> {
+    GLOBAL_ID.generate()
+}
 
 #[inline(always)]
 pub(crate) fn gen_executor_id() -> Option<u128> {
     EXECUTOR_ID.generate()
+}
+
+#[inline(always)]
+pub(crate) fn gen_task_id() -> Option<u128> {
+    TASK_ID.generate()
 }
 
 #[derive(Debug, Clone)]

@@ -16,7 +16,7 @@ use once_cell::sync::OnceCell;
 pub(crate) struct ExecutorState {
     /// per-process unique ID for each executor.
     /// this ID will not reuse even a executor exits.
-    pub id: u32,
+    pub id: ExecutorId,
 
     /// checks whether a executor working (for run the Runnable).
     pub working: AtomicBool,
@@ -40,7 +40,7 @@ pub(crate) struct ExecutorState {
 
 impl ExecutorState {
     #[inline(always)]
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: ExecutorId) -> Self {
         Self {
             id,
             working: AtomicBool::new(false),
@@ -107,11 +107,17 @@ impl Executor {
 
     /// run a runnable, catch unwind if it panic (if possible)
     #[inline(always)]
-    fn run_one(&self, runinfo: RunInfo) {
+    fn run_one(&self, runinfo: RunInfo, bulk: bool) {
         let id = self.state.id;
 
         log::debug!("Runnable ScheduleInfo: {:?}", runinfo.info);
+        
+        let taskinfo = runinfo.runnable.metadata().clone();
 
+        if ! bulk {
+            self.state.working.store(true, Relaxed);
+        }
+        let t = Instant::now();
         match std::panic::catch_unwind(move || { runinfo.runnable.run() }) {
             Ok(_) => {},
             Err(boxed_any) => {
@@ -147,6 +153,14 @@ impl Executor {
                 );
             }
         }
+        let t = t.elapsed();
+        if ! bulk {
+            self.state.working.store(false, Relaxed);
+        }
+
+        taskinfo.0.run_count.checked_add(1);
+        taskinfo.0.run_took.add(t);
+        self.state.working_time.add(t);
 
         if ProfileConfig::global().is_enabled() {
             let p = Profile::global();
@@ -165,8 +179,7 @@ impl Executor {
         let exitable = self.state.exitable;
         let mut worked;
         let mut t = Instant::now();
-        let mut t2;
-        let interval = get_monitor_interval();
+        let interval = MonitorConfig::global().interval();
         let max_idle = interval * 2;
         loop {
             worked = false;
@@ -175,10 +188,10 @@ impl Executor {
                     Ok(runinfo) => {
                         if ! worked {
                             worked = true;
-                            t = Instant::now();
                             self.state.working.store(true, Relaxed);
                         }
-                        self.run_one(runinfo);
+
+                        self.run_one(runinfo, true);
                     },
                     Err(err) => {
                         if err.is_empty() {
@@ -191,13 +204,10 @@ impl Executor {
             }
 
             if worked {
-                t2 = t.elapsed();
-
                 #[cfg(test)]
                 log::trace!("{} worked", self.state.id);
 
                 self.state.working.store(false, Relaxed);
-                self.state.working_time.add(t2);
                 if exitable {
                     t = Instant::now();
                 }
@@ -208,14 +218,10 @@ impl Executor {
 
             match rx.recv_timeout(interval) {
                 Ok(runinfo) => {
-                    self.state.working.store(true, Relaxed);
-
-                    t = Instant::now();
-                    self.run_one(runinfo);
-                    t2 = t.elapsed();
-
-                    self.state.working.store(false, Relaxed);
-                    self.state.working_time.add(t2);
+                    if exitable {
+                        t = Instant::now();
+                    }
+                    self.run_one(runinfo, false);
                 },
                 Err(err) => {
                     if err.is_disconnected() {
@@ -255,12 +261,5 @@ impl Drop for Executor {
         self.state.working.store(false, Relaxed);
 
     }
-}
-
-#[inline(always)]
-pub(crate) fn gen_executor_id() -> Option<u32> {
-    static COUNTER: AtomicU32 = AtomicU32::new(1);
-
-    COUNTER.checked_add(1)
 }
 

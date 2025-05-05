@@ -11,6 +11,7 @@ pub mod util;
 pub use util::*;
 
 pub mod id;
+pub use id::*;
 
 #[cfg(test)]
 mod tests;
@@ -27,7 +28,7 @@ use std::{
 };
 
 use crossbeam_channel::{Sender, Receiver};
-use async_task::{Runnable, ScheduleInfo};
+use async_task::ScheduleInfo;
 
 use portable_atomic::{
     AtomicBool,
@@ -39,7 +40,42 @@ use portable_atomic::{
 };
 use once_cell::sync::Lazy;
 
-static EXECUTOR_INDEX: Lazy<scc2::HashIndex<u32, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
+#[derive(Debug)]
+struct TaskInfoInner {
+    id: TaskId,
+    nice: i8, // TODO unimplemented
+    run_count: AtomicU64,
+    run_took: AtomicDuration,
+}
+impl TaskInfoInner {
+    fn new(nice: i8) -> Self {
+        Self {
+            id: gen_task_id().expect("Task ID exhausted!"),
+            nice,
+            run_count: AtomicU64::new(0),
+            run_took: AtomicDuration::zero(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskInfo(Arc<TaskInfoInner>);
+
+impl TaskInfo {
+    fn new(nice: i8) -> Self {
+        Self (
+            Arc::new(TaskInfoInner::new(nice))
+        )
+    }
+}
+
+pub type Task<T> = async_task::Task<T, TaskInfo>;
+pub type Runnable = async_task::Runnable<TaskInfo>;
+
+pub type ExecutorId = u128;
+pub type TaskId = u128;
+
+static EXECUTOR_INDEX: Lazy<scc2::HashIndex<ExecutorId, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
 
 static MONITOR_THREAD_JH: scc2::Atom<std::thread::JoinHandle<()>> = scc2::Atom::init();
 
@@ -573,32 +609,32 @@ pub struct ExecutorStatus {
     last_update: Option<Instant>,
 
     /// total executors count, includes exited, running, working executors.
-    pub total: Vec<u32>,
+    pub total: Vec<ExecutorId>,
 
     /// working executors is busying for running Runnables.
-    pub working: Vec<u32>,
+    pub working: Vec<ExecutorId>,
 
     /// idle executors is not busy. it just waiting for new Runnables.
-    pub idle: Vec<u32>,
+    pub idle: Vec<ExecutorId>,
 
     /// running executors means it's thread is running (not exited).
-    pub running: Vec<u32>,
+    pub running: Vec<ExecutorId>,
 
     /// removes executors due to it has been exited.
-    pub remove: Vec<u32>,
+    pub remove: Vec<ExecutorId>,
 
     /// temporary executors is can be exit if there is no Runnables a duration.
-    pub temporary: Vec<u32>,
+    pub temporary: Vec<ExecutorId>,
 
     /// persist executors will never exits even there is no Runnables.
-    pub persist: Vec<u32>,
+    pub persist: Vec<ExecutorId>,
 
-    /// the work load of all executors. tuple = (u32 ID, f64 Ratio).
+    /// the work load of all executors. tuple = (u128 ID, f64 Ratio).
     /// the f64 is means the percent of working time. that is within 0.0~1.0
     /// * 0.0 means 0% of time is working.
     /// * 0.2 means 20% of time is working.
     /// * 1.0 means 100% of time is working.
-    pub work_load: Vec<(u32, f64)>,
+    pub work_load: Vec<(ExecutorId, f64)>,
 }
 impl ExecutorStatus {
     #[inline(always)]
@@ -883,7 +919,7 @@ pub fn scheduler(
 const SCHEDULER: async_task::WithInfo<fn(Runnable, ScheduleInfo)> = async_task::WithInfo(scheduler);
 
 #[inline(always)]
-pub fn spawn<F>(f: F) -> async_task::Task<F::Output>
+pub fn spawn<F>(f: F) -> Task<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -895,6 +931,7 @@ where
     let (runnable, task) =
         async_task::Builder::new()
         .propagate_panic(true)
+        .metadata(TaskInfo::new(0))
         .spawn(move |_| { f }, SCHEDULER);
 
     runnable.schedule();

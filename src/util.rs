@@ -334,7 +334,7 @@ pub mod hack {
 
                     if let U32(subsec_nanos) = dh[1] {
                         #[cfg(test)]
-                        dbg!(_="instant_to_duration method 1", dh, t);
+                        dbg!({"instant_to_duration method 1";}, dh, t);
 
                         return Duration::new(secs, subsec_nanos);
                     }
@@ -374,7 +374,7 @@ pub mod hack {
         }
 
         #[cfg(test)]
-        dbg!(_="instant_to_duration method 2", val, t, d, errs);
+        dbg!({"instant_to_duration method 2";}, val, t, d, errs);
 
         val
     }
