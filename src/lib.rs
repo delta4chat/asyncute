@@ -785,8 +785,10 @@ pub fn spawn_executor(exitable: bool) {
 
         let parent = std::thread::current();
 
+        let idx = id as u64;
+
         std::thread::Builder::new()
-            .name(format!("ac-exec-{id}-{flag}"))
+            .name(format!("ac-exec-{idx}-{flag}"))
             .stack_size(1048576 * 20)
             .spawn(move || {
                 parent.unpark();
