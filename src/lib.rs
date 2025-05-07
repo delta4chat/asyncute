@@ -317,14 +317,7 @@ impl Profile {
 
     #[inline(always)]
     pub fn start(&self) -> bool {
-        let pc = ProfileConfig::global();
-        if pc.is_enabled() {
-            return false;
-        }
-
-        self.started.set(Instant::now());
-        pc.enable();
-        true
+        ProfileConfig::global().enable()
     }
 
     #[inline(always)]
@@ -365,9 +358,15 @@ impl ProfileConfig {
     }
 
     #[inline(always)]
-    pub fn enable(&self) {
+    pub fn enable(&self) -> bool {
+        if self.is_enabled() {
+            return false;
+        }
+
         Profile::global().started.set(Instant::now());
         self.enabled.store(true, Relaxed);
+
+        true
     }
 
     #[inline(always)]
