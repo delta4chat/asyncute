@@ -18,7 +18,9 @@ mod tests;
 
 use core::{
     future::Future,
-    ops::Range,
+    ops::{Deref, Range},
+    pin::Pin,
+    task::{Poll, Context},
 };
 
 use std::{
@@ -41,7 +43,7 @@ use portable_atomic::{
 use once_cell::sync::Lazy;
 
 #[derive(Debug)]
-struct TaskInfoInner {
+pub struct TaskInfoInner {
     dropped: bool,
 
     id: TaskId,
@@ -50,6 +52,7 @@ struct TaskInfoInner {
     run_took: AtomicDuration,
 }
 impl TaskInfoInner {
+    #[inline(always)]
     fn new(nice: i8) -> Self {
         let mut this =
             Self {
@@ -72,6 +75,7 @@ impl TaskInfoInner {
 }
 
 impl Drop for TaskInfoInner {
+    #[inline(always)]
     fn drop(&mut self) {
         if self.dropped {
             return;
@@ -86,10 +90,20 @@ impl Drop for TaskInfoInner {
 pub struct TaskInfo(Arc<TaskInfoInner>);
 
 impl TaskInfo {
+    #[inline(always)]
     fn new(nice: i8) -> Self {
         Self (
             Arc::new(TaskInfoInner::new(nice))
         )
+    }
+}
+
+impl Deref for TaskInfo {
+    type Target = TaskInfoInner;
+
+    #[inline(always)]
+    fn deref(&self) -> &TaskInfoInner {
+        self.0.as_ref()
     }
 }
 
@@ -151,19 +165,10 @@ pub struct RunnableProfile {
     run_took: scc2::Queue<Duration>,
     */
 
-    /// all "alive" Runnable that is not terminated.
     alive_count: AtomicU64,
-
-    /// all handled Runnable (by running it)
     run_count: AtomicU64,
-
-    /// how many Runnable ran within one second (in average)
     run_frequency: AtomicF64,
-
-    /// all scheduled Runnable (by queues to crossbeam-channel)
     queue_count: AtomicU64,
-
-    /// how many Runnable queues within one second (in average)
     queue_frequency: AtomicF64,
 }
 impl RunnableProfile {
@@ -216,26 +221,31 @@ impl RunnableProfile {
         true
     }
 
+    /// all "alive" Runnable that is not terminated.
     #[inline(always)]
     pub fn alive_count(&self) -> u64 {
         self.alive_count.load(Relaxed)
     }
 
+    /// all handled Runnable (by running it)
     #[inline(always)]
     pub fn run_count(&self) -> u64 {
         self.run_count.load(Relaxed)
     }
 
+    /// how many Runnable ran within one second (in average)
     #[inline(always)]
     pub fn run_frequency(&self) -> f64 {
         self.run_frequency.load(Relaxed)
     }
 
+    /// all scheduled Runnable (by queues to crossbeam-channel)
     #[inline(always)]
     pub fn queue_count(&self) -> u64 {
         self.queue_count.load(Relaxed)
     }
 
+    /// how many Runnable queues within one second (in average)
     #[inline(always)]
     pub fn queue_frequency(&self) -> f64 {
         self.queue_frequency.load(Relaxed)
@@ -243,6 +253,8 @@ impl RunnableProfile {
 }
 
 pub struct FutureProfile {
+    alive_count: AtomicU64,
+    poll_count: AtomicU64,
     pending_count: AtomicU64,
     ready_count: AtomicU64,
 }
@@ -251,6 +263,8 @@ impl FutureProfile {
     pub const fn global() -> &'static Self {
         static GLOBAL: FutureProfile =
             FutureProfile {
+                alive_count: AtomicU64::new(0),
+                poll_count: AtomicU64::new(0),
                 pending_count: AtomicU64::new(0),
                 ready_count: AtomicU64::new(0),
             };
@@ -258,11 +272,25 @@ impl FutureProfile {
         &GLOBAL
     }
 
+    /// how many futures alive currently?
+    #[inline(always)]
+    pub fn alive_count(&self) -> u64 {
+        self.alive_count.load(Relaxed)
+    }
+
+    /// total numer of Future::poll() calls. 
+    #[inline(always)]
+    pub fn poll_count(&self) -> u64 {
+        self.poll_count.load(Relaxed)
+    }
+
+    /// total numer of Poll::Pending results.
     #[inline(always)]
     pub fn pending_count(&self) -> u64 {
         self.pending_count.load(Relaxed)
     }
 
+    /// total numer of Poll::Ready results.
     #[inline(always)]
     pub fn ready_count(&self) -> u64 {
         self.ready_count.load(Relaxed)
@@ -285,6 +313,23 @@ impl Profile {
             };
 
         &GLOBAL
+    }
+
+    #[inline(always)]
+    pub fn start(&self) -> bool {
+        let pc = ProfileConfig::global();
+        if pc.is_enabled() {
+            return false;
+        }
+
+        self.started.set(Instant::now());
+        pc.enable();
+        true
+    }
+
+    #[inline(always)]
+    pub fn stop(&self) {
+        ProfileConfig::global().disable();
     }
 
     #[inline(always)]
@@ -321,6 +366,7 @@ impl ProfileConfig {
 
     #[inline(always)]
     pub fn enable(&self) {
+        Profile::global().started.set(Instant::now());
         self.enabled.store(true, Relaxed);
     }
 
@@ -764,9 +810,7 @@ impl ExecutorStatus {
 
 #[inline(always)]
 pub fn spawn_executor(exitable: bool) {
-    let id =
-        gen_executor_id()
-        .expect("Executor ID exhausted!");
+    let id = gen_executor_id().expect("Executor ID exhausted!");
 
     let mut state = ExecutorState::new(id);
     state.exitable = exitable;
@@ -964,11 +1008,81 @@ where
         let _ = start_monitor();
     }
 
-    let (runnable, task) =
-        async_task::Builder::new()
-        .propagate_panic(true)
-        .metadata(TaskInfo::new(0))
-        .spawn(move |_| { f }, SCHEDULER);
+    struct WrappedFuture<T, F: Future<Output=T>> {
+        dropped: bool,
+
+        id: TaskId,
+        fut: Pin<Box<F>>,
+    }
+
+    impl<T, F: Future<Output=T>> WrappedFuture<T, F> {
+        #[inline(always)]
+        fn new(id: TaskId, f: F) -> Self {
+            let mut this =
+                Self {
+                    dropped: true,
+
+                    id,
+                    fut: Box::pin(f),
+                };
+
+            if ProfileConfig::global().is_enabled() {
+                let fp = FutureProfile::global();
+                if fp.alive_count.checked_add(1).is_some() {
+                    this.dropped = false;
+                }
+            }
+
+            this
+        }
+    }
+
+    impl<T, F: Future<Output=T>> Future for WrappedFuture<T, F> {
+        type Output = T;
+
+        #[inline(always)]
+        fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<T> {
+            let res = self.fut.as_mut().poll(ctx);
+
+            if ProfileConfig::global().is_enabled() {
+                let fp = FutureProfile::global();
+                fp.poll_count.checked_add(1);
+
+                if res.is_pending() {
+                    fp.pending_count.checked_add(1);
+                } else if res.is_ready() {
+                    fp.ready_count.checked_add(1);
+                }
+            }
+
+            res
+        }
+    }
+
+    impl<T, F: Future<Output=T>> Drop for WrappedFuture<T, F> {
+        #[inline(always)]
+        fn drop(&mut self) {
+            if self.dropped {
+                return;
+            }
+            self.dropped = true;
+
+            FutureProfile::global().alive_count.checked_sub(1);
+        }
+    }
+
+    let (runnable, task) = {
+        let b =
+            async_task::Builder::new()
+            .propagate_panic(true)
+            .metadata(TaskInfo::new(0));
+
+        if ProfileConfig::global().is_enabled() {
+            b.spawn(move |taskinfo| { WrappedFuture::new(taskinfo.id, f) }, SCHEDULER)
+        } else {
+            b.spawn(move |_| { f }, SCHEDULER)
+        }
+    };
 
     runnable.schedule();
     task

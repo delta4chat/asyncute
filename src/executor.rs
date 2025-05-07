@@ -67,6 +67,7 @@ impl ExecutorState {
         working_time.as_secs_f64() / running_time.as_secs_f64()
     }
 
+    #[inline(always)]
     pub fn exit(&self) -> Result<(), &'static str> {
         if self.exitable {
             self.please_exit.store(true, Relaxed);

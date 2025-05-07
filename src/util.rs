@@ -105,6 +105,7 @@ macro_rules! checked_float_impls {
     ($name:ident = $($op:ident,)*) => {
         impl Checked for $name {
             $(
+                #[inline(always)]
                 fn $op(self, val: Self) -> Option<Self> {
                     const OP: &'static str = stringify!($op);
 
@@ -167,6 +168,7 @@ macro_rules! atomic_checked_impl {
             type Item = $t;
 
             $(
+                #[inline(always)]
                 fn $op(&self, val: $t) -> Option<$t> {
                     const ZERO: $t = 0u8 as $t;
 
@@ -297,6 +299,7 @@ pub mod hack {
     use super::*;
 
     /// try to get the zero point of Instant.
+    #[inline(always)]
     pub fn instant_zero() -> Instant {
         let t = Instant::now();
         t - instant_to_duration(t)
@@ -392,6 +395,7 @@ macro_rules! gen_hash_write {
 
         $(
             impl From<$t> for HashWrite {
+                #[inline(always)]
                 fn from(val: $t) -> HashWrite {
                     HashWrite::$v(val)
                 }
@@ -400,6 +404,7 @@ macro_rules! gen_hash_write {
             impl TryFrom<HashWrite> for $t {
                 type Error = HashWrite;
 
+                #[inline(always)]
                 fn try_from(val: HashWrite) -> Result<$t, HashWrite> {
                     match val {
                         HashWrite::$v(inner) => {
@@ -414,6 +419,7 @@ macro_rules! gen_hash_write {
         )*
 
         impl From<&[u8]> for HashWrite {
+            #[inline(always)]
             fn from(val: &[u8]) -> HashWrite {
                 HashWrite::Bytes(val.to_vec())
             }
@@ -445,12 +451,14 @@ pub struct DumpHasher {
 }
 
 impl DumpHasher {
+    #[inline(always)]
     pub const fn new() -> Self {
         Self {
             data: Vec::new(),
         }
     }
 
+    #[inline(always)]
     pub const fn data<'a>(&'a self) -> &'a Vec<HashWrite> {
         &(self.data)
     }
@@ -459,11 +467,13 @@ impl DumpHasher {
 macro_rules! dump_hasher_impl {
     ($($n:ident = $t:ty,)*) => {
         impl core::hash::Hasher for DumpHasher {
+            #[inline(always)]
             fn finish(&self) -> u64 {
                 0
             }
 
             $(
+                #[inline(always)]
                 fn $n(&mut self, val: $t) {
                     self.data.push(val.into());
                 }
@@ -656,6 +666,7 @@ impl AtomicInstant {
         }
     }
 
+    #[inline(always)]
     pub const fn init_now() -> Self {
         let mut this = Self::init();
         this.init_zero = false;
