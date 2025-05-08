@@ -6,7 +6,8 @@ use std::{
 };
 
 use portable_atomic::{
-    AtomicU32, AtomicBool,
+    AtomicU32,
+    AtomicBool,
     Ordering::Relaxed,
 };
 

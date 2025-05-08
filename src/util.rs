@@ -578,36 +578,40 @@ impl AtomicDuration {
 
     #[inline(always)]
     pub fn add_secs(&self, s: u64) -> &Self {
-        self.total_ns.fetch_add(Self::secs_to_nanos(s), Relaxed);
-        if let Some(ref changed) = self.changed {
-            changed.store(true, Relaxed);
+        if self.total_ns.checked_add(Self::secs_to_nanos(s)).is_some() {
+            if let Some(ref changed) = self.changed {
+                changed.store(true, Relaxed);
+            }
         }
         self
     }
 
     #[inline(always)]
     pub fn add_nanos(&self, n: u128) -> &Self {
-        self.total_ns.fetch_add(n, Relaxed);
-        if let Some(ref changed) = self.changed {
-            changed.store(true, Relaxed);
+        if self.total_ns.checked_add(n).is_some() {
+            if let Some(ref changed) = self.changed {
+                changed.store(true, Relaxed);
+            }
         }
         self
     }
 
     #[inline(always)]
     pub fn add(&self, d: Duration) -> &Self {
-        self.total_ns.add(d.as_nanos(), Relaxed);
-        if let Some(ref changed) = self.changed {
-            changed.store(true, Relaxed);
+        if self.total_ns.checked_add(d.as_nanos()).is_some() {
+            if let Some(ref changed) = self.changed {
+                changed.store(true, Relaxed);
+            }
         }
         self
     }
 
     #[inline(always)]
     pub fn sub(&self, d: Duration) -> &Self {
-        self.total_ns.sub(d.as_nanos(), Relaxed);
-        if let Some(ref changed) = self.changed {
-            changed.store(true, Relaxed);
+        if self.total_ns.checked_sub(d.as_nanos()).is_some() {
+            if let Some(ref changed) = self.changed {
+                changed.store(true, Relaxed);
+            }
         }
         self
     }
