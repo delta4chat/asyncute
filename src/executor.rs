@@ -188,6 +188,15 @@ impl Executor {
             loop {
                 match rx.try_recv() {
                     Ok(runinfo) => {
+                        #[cfg(feature="kanal")]
+                        let runinfo =
+                            match runinfo {
+                                Some(v) => v,
+                                _ => {
+                                    break;
+                                }
+                            };
+
                         if ! worked {
                             worked = true;
                             self.state.working.store(true, Relaxed);
@@ -212,6 +221,9 @@ impl Executor {
                         } else {
                             return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
                         }
+
+                        #[cfg(feature="kanal")]
+                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
                     }
                 }
             }

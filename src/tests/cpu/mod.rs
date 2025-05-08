@@ -574,6 +574,9 @@ impl CPU {
         #[cfg(feature="crossbeam-channel")]
         let (ops_tx, ops_rx) = crossbeam_channel::bounded(self.tasks as usize);
 
+        #[cfg(feature="kanal")]
+        let (ops_tx, ops_rx) = kanal::bounded(self.tasks as usize);
+
         for i in 0 .. self.tasks {
             let ops_tx = ops_tx.clone();
             let cache = cache.clone();
