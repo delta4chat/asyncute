@@ -172,8 +172,3 @@ pub(crate) fn gen_task_id() -> Option<u128> {
     TASK_ID.generate()
 }
 
-#[derive(Debug, Clone)]
-pub struct IDServer {
-    udp: Arc<std::net::UdpSocket>,
-}
-

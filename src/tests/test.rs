@@ -87,3 +87,13 @@ fn test1() {
     smol::block_on(task);
 }
 
+#[test]
+// test for CPU usage if idle mostly.
+fn test_idle() {
+    let task = spawn(async {
+        for i in 0..20u8 {
+            smol::Timer::after(Duration::from_secs(1)).await;
+        }
+    });
+    smol::block_on(task);
+}

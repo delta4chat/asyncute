@@ -196,10 +196,21 @@ impl Executor {
                         self.run_one(runinfo, true);
                     },
                     Err(err) => {
+                        #[cfg(feature="flume")]
+                        match err {
+                            flume::TryRecvError::Empty => {
+                                break;
+                            },
+                            _ => {
+                                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                            }
+                        }
+
+                        #[cfg(feature="crossbeam-channel")]
                         if err.is_empty() {
                             break;
                         } else {
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"))
+                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
                         }
                     }
                 }
@@ -226,8 +237,17 @@ impl Executor {
                     self.run_one(runinfo, false);
                 },
                 Err(err) => {
+                    #[cfg(feature="flume")]
+                    match err {
+                        flume::RecvTimeoutError::Timeout => {},
+                        _ => {
+                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                        }
+                    }
+
+                    #[cfg(feature="crossbeam-channel")]
                     if err.is_disconnected() {
-                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"))
+                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
                     }
                 }
             }

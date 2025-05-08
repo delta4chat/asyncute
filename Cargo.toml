@@ -10,18 +10,23 @@ keywords = ["async", "executor", "async-executor"]
 categories = ["asynchronous", "concurrency"]
 
 [features]
-default = []
+default = ["flume"]
+flume = ["dep:flume"]
+crossbeam-channel = ["dep:crossbeam-channel"]
 
 [dependencies]
-ahash = "0.8.11"
 async-task = "4.7.1"
-crossbeam-channel = "0.5.14"
-event-listener = { version = "5.4.0", features = ["portable-atomic"] }
-log = { version = "0.4.27", features = ["std"] }
+
+crossbeam-channel = { optional = true, version = "0.5.14" }
+flume = { optional = true, version = "0.11.1", default-features = false }
+
+ahash = "0.8.11"
+scc2 = "2.4.2"
+
 num-traits = "0.2.19"
+log = { version = "0.4.27", features = ["std"] }
 once_cell = { version = "1.21.3", features = ["parking_lot", "portable-atomic"] }
 portable-atomic = { version = "1.11.0", features = ["float", "std"] }
-scc2 = "2.4.2"
 
 [dev-dependencies]
 smol = "2.0.2"

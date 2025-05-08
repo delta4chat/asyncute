@@ -568,6 +568,10 @@ impl CPU {
                 .build();
             //);
 
+        #[cfg(feature="flume")]
+        let (ops_tx, ops_rx) = flume::bounded(self.tasks as usize);
+
+        #[cfg(feature="crossbeam-channel")]
         let (ops_tx, ops_rx) = crossbeam_channel::bounded(self.tasks as usize);
 
         for i in 0 .. self.tasks {

@@ -29,7 +29,12 @@ use std::{
     time::{Instant, Duration},
 };
 
+#[cfg(feature="flume")]
+use flume::{Sender, Receiver};
+
+#[cfg(feature="crossbeam-channel")]
 use crossbeam_channel::{Sender, Receiver};
+
 use async_task::ScheduleInfo;
 
 use portable_atomic::{
@@ -123,7 +128,16 @@ pub(crate) struct RunInfo {
 }
 
 static RUNINFO_CHANNEL: Lazy<(Sender<RunInfo>, Receiver<RunInfo>)> =
-    Lazy::new(|| { crossbeam_channel::bounded(1048576) });
+    Lazy::new(|| {
+        #[cfg(feature="flume")]
+        let x = flume::bounded(1048576);
+
+        #[cfg(feature="crossbeam-channel")]
+        let x = crossbeam_channel::bounded(1048576);
+
+        // the channel select by feature
+        x
+    });
 
 #[inline(always)]
 fn get_runinfo_channel() -> &'static (Sender<RunInfo>, Receiver<RunInfo>) {
