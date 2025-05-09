@@ -97,3 +97,27 @@ fn test_idle() {
     });
     smol::block_on(task);
 }
+
+#[test]
+// test the execute delay (cost of time from schedule and execute, aka channel send and recv)
+fn test_execute_cost() {
+    let mut costs = Vec::with_capacity(1001);
+    let mut t;
+    let mut elapsed;
+    for _ in 0..1000u16 {
+        t = Instant::now();
+        elapsed = smol::block_on(spawn(async move { t.elapsed() }));
+        dbg!(elapsed);
+        costs.push(elapsed);
+    }
+
+    let t = Instant::now();
+    let n = 1000u16;
+    for _ in 0..n {
+        smol::block_on(spawn(async {}));
+    }
+    let t = t.elapsed();
+    costs.push(dbg!(Duration::from_secs_f64(t.as_secs_f64() / (n as f64))));
+
+    dbg!(Duration::from_secs_f64(costs.iter().map(Duration::as_secs_f64).sum::<f64>() / (costs.len() as f64)));
+}
