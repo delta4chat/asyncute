@@ -1,4 +1,5 @@
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 pub trait Ip: Sized {
     fn from_ip(ip: IpAddr) -> Self;
@@ -645,7 +646,7 @@ fn test_cpu_bound_asyncute() {
 
     dbg!(
         default()
-            .spawn(Box::new(|f| { crate::spawn(f).detach(); }))
+            .spawn(Arc::new(|f| { crate::spawn(f).detach(); }))
             .moka_cache_concurrent_rw_access()
     );
 }
@@ -656,7 +657,7 @@ fn test_cpu_bound_smolscale() {
 
     dbg!(
         default()
-            .spawn(Box::new(|f| { smolscale::spawn(f).detach(); }))
+            .spawn(Arc::new(|f| { smolscale::spawn(f).detach(); }))
             .moka_cache_concurrent_rw_access()
     );
 }
@@ -667,7 +668,7 @@ fn test_cpu_bound_smolscale2() {
 
     dbg!(
         default()
-            .spawn(Box::new(|f| { smolscale2::spawn(f).detach(); }))
+            .spawn(Arc::new(|f| { smolscale2::spawn(f).detach(); }))
             .moka_cache_concurrent_rw_access()
     );
 }
@@ -678,7 +679,7 @@ fn test_cpu_bound_async_global_executor() {
 
     dbg!(
         default()
-            .spawn(Box::new(|f| { async_global_executor::spawn(f).detach(); }))
+            .spawn(Arc::new(|f| { async_global_executor::spawn(f).detach(); }))
             .moka_cache_concurrent_rw_access()
     );
 }
@@ -692,7 +693,7 @@ fn test_cpu_bound_tokio() {
 
     dbg!(
         default()
-            .spawn(Box::new(|f| { tokio::spawn(f); }))
+            .spawn(Arc::new(|f| { tokio::spawn(f); }))
             .moka_cache_concurrent_rw_access()
     );
 }

@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 mod cpu;
-//mod io;
+mod io;
 
 mod test;
 
@@ -8,5 +10,5 @@ use core::{
     pin::Pin,
 };
 
-pub type Spawn = Box<dyn FnMut(Pin<Box<dyn Future<Output=()> + Send + Sync + 'static>>)>;
+pub type Spawn = Arc<dyn Fn(Pin<Box<dyn Future<Output=()> + Send + 'static>>) + Send + Sync>;
 
