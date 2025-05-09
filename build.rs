@@ -21,6 +21,8 @@ check_exclusive_features!(
     "flume",
     "crossbeam-channel",
     "kanal",
+
+    "std-mpmc",
 );
 
 fn main() {

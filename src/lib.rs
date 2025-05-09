@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
+
 #![cfg_attr(not(test), warn(missing_docs))]
+
+#![cfg_attr(feature="std-mpmc", feature(mpmc_channel))]
 
 pub mod executor;
 pub use executor::*;
@@ -37,6 +40,9 @@ use crossbeam_channel::{Sender, Receiver};
 
 #[cfg(feature="kanal")]
 use kanal::{Sender, Receiver};
+
+#[cfg(feature="std-mpmc")]
+use std::sync::mpmc::{Sender, Receiver};
 
 use async_task::ScheduleInfo;
 
@@ -141,6 +147,9 @@ static RUNINFO_CHANNEL: Lazy<(Sender<RunInfo>, Receiver<RunInfo>)> =
 
         #[cfg(feature="kanal")]
         return kanal::bounded(RUNINFO_CHANNEL_CAPACITY);
+
+        #[cfg(feature="std-mpmc")]
+        return std::sync::mpmc::sync_channel(RUNINFO_CHANNEL_CAPACITY);
     });
 
 #[inline(always)]

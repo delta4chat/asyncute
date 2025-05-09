@@ -178,11 +178,16 @@ impl Executor {
         let _defer = Defer::new(|| {
             self.state.working.store(false, Relaxed);
         });
+
         let exitable = self.state.exitable;
-        let mut worked;
-        let mut t = Instant::now();
         let interval = MonitorConfig::global().interval();
         let max_idle = interval * 2;
+
+        let mut worked;
+        let mut t = Instant::now();
+
+        let error_closed = Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+
         loop {
             worked = false;
             loop {
@@ -211,7 +216,7 @@ impl Executor {
                                 break;
                             },
                             _ => {
-                                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                                return error_closed;
                             }
                         }
 
@@ -219,11 +224,23 @@ impl Executor {
                         if err.is_empty() {
                             break;
                         } else {
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                            return error_closed;
                         }
 
                         #[cfg(feature="kanal")]
-                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                        return error_closed;
+
+                        // std::sync::mpmc is ported from crossbeam-channel's implementation.
+                        // but it uses std::sync::mpsc's Error type, and without such as "is_empty" methods.
+                        #[cfg(feature="std-mpmc")]
+                        match err {
+                            std::sync::mpmc::TryRecvError::Empty => {
+                                break;
+                            },
+                            _ => {
+                                return error_closed;
+                            }
+                        }
                     }
                 }
             }
@@ -253,13 +270,31 @@ impl Executor {
                     match err {
                         flume::RecvTimeoutError::Timeout => {},
                         _ => {
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                            return error_closed;
                         }
                     }
 
                     #[cfg(feature="crossbeam-channel")]
-                    if err.is_disconnected() {
-                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
+                    if ! err.is_timeout() {
+                        return error_closed;
+                    }
+
+                    #[cfg(feature="kanal")]
+                    match err {
+                        kanal::ReceiveErrorTimeout::Timeout => {},
+                        _ => {
+                            return error_closed;
+                        }
+                    }
+
+                    // std::sync::mpmc is ported from crossbeam-channel's implementation.
+                    // but it uses std::sync::mpsc's Error type, and without such as "is_timeout" methods.
+                    #[cfg(feature="std-mpmc")]
+                    match err {
+                        std::sync::mpmc::RecvTimeoutError::Timeout => {},
+                        _ => {
+                            return error_closed;
+                        }
                     }
                 }
             }

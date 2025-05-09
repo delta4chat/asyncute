@@ -1,45 +1,5 @@
 use std::sync::Arc;
 
-fn find_primes_in_worse_method(mut cb: impl FnMut(u128) -> bool) {
-    let mut n: u128 = 1;
-    let mut is_prime = true;
-    loop {
-        if is_prime {
-            if cb(n) {
-                return;
-            }
-        }
-        n += 1;
-
-        is_prime = true;
-        for d in 2..n {
-            if (n % d) != 0 {
-                is_prime = false;
-                break;
-            }
-        }
-    }
-}
-
-fn find_machine_e(mut cb: impl FnMut(f64) -> bool) {
-    let mut init = 20914834.3492847762392393;
-    let mut n;
-    let mut n2;
-    loop {
-        n = init;
-        n2 = n / 2.0;
-        while n != n2 {
-            n = n2 / 2.0;
-            n2 = n / 2.0;
-        }
-        if cb(n) {
-            return;
-        }
-        init = init * (2.0 + n);
-        init *= 1.5;
-    }
-}
-
 use std::time::Duration;
 use crate::tests::cpu::IpAddrExt;
 use crate::tests::Spawn;
@@ -121,6 +81,9 @@ impl IO {
 
         #[cfg(feature="kanal")]
         let (ops_tx, ops_rx) = kanal::bounded(self.tasks as usize);
+
+        #[cfg(feature="std-mpmc")]
+        let (ops_tx, ops_rx) = std::sync::mpmc::sync_channel(self.tasks as usize);
 
         // create TCP server
         let tcp = smol::block_on(smol::net::TcpListener::bind("127.0.0.1:0")).unwrap();

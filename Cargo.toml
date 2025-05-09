@@ -11,9 +11,13 @@ categories = ["asynchronous", "concurrency"]
 
 [features]
 default = ["flume"]
+
 flume = ["dep:flume"]
 crossbeam-channel = ["dep:crossbeam-channel"]
 kanal = ["dep:kanal"]
+
+std-mpmc = ["nightly"]
+nightly = []
 
 [dependencies]
 async-task = "4.7.1"
