@@ -23,6 +23,8 @@ use portable_atomic::{
 
 use num_traits::*;
 
+use scc2::ebr::AtomicOwned;
+
 pub type PhantomNonSend = PhantomData<std::sync::MutexGuard<'static, ()>>;
 pub type PhantomNonSync = PhantomData<core::cell::Cell<()>>;
 pub type PhantomNonSendSync = PhantomData<(*mut (), PhantomNonSync)>;
@@ -583,6 +585,90 @@ pub mod injector {
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
             self.0.recv_deadline(deadline)
         }
+    }
+}
+
+pub struct Storage<T, const N: usize> {
+    array: [AtomicOwned<T>; N],
+    has: [AtomicBool; N],
+    len: AtomicUsize,
+}
+impl<T: 'static, const N: usize> Storage<T, N> {
+    pub const fn new() -> Self {
+        assert!(N > 0);
+
+        Self {
+            array: [const { AtomicOwned::null() }; N],
+            has: [const { AtomicBool::new(false) }; N],
+            len: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len.load(Relaxed)
+    }
+
+    pub fn push(&self, item: T) -> bool {
+        use scc2::ebr::{Ptr, Owned, Tag};
+
+        if self.len() >= N {
+            return false;
+        }
+
+        let mut owned = Owned::new(item);
+        let g = scc2::ebr::Guard::new();
+        for i in 0..N {
+            if self.has[i].load(Relaxed) {
+                continue;
+            }
+
+            match
+                self.array[i].compare_exchange(
+                    Ptr::null(),
+                    (Some(owned), Tag::None),
+                    Relaxed,
+                    Relaxed,
+                    &g
+                )
+            {
+                Ok((prev, new)) => {
+                    assert!(prev.is_none());
+                    self.has[i].store(true, Relaxed);
+                    self.len.checked_add(1);
+                    return true;
+                },
+                Err((o, cur)) => {
+                    owned = o.unwrap();
+                    assert!(! cur.is_null());
+                    self.has[i].store(true, Relaxed);
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
+        let len = self.len();
+        if len == 0 {
+            return None;
+        }
+
+        let mut maybe_owned;
+        for i in 0..N {
+            if self.has[i].load(Relaxed) {
+                maybe_owned = self.array[i].swap(
+                    (None, scc2::ebr::Tag::None),
+                    Relaxed
+                ).0;
+
+                self.has[i].store(false, Relaxed);
+                if let Some(owned) = maybe_owned {
+                    return Some(owned);
+                }
+            }
+        }
+        None
     }
 }
 
