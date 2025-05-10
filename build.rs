@@ -21,6 +21,7 @@ check_exclusive_features!(
     "flume",
     "crossbeam-channel",
     "kanal",
+    "crossbeam-deque",
 
     "std-mpmc",
 );

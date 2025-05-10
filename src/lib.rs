@@ -41,6 +41,9 @@ use crossbeam_channel::{Sender, Receiver};
 #[cfg(feature="kanal")]
 use kanal::{Sender, Receiver};
 
+#[cfg(feature="crossbeam-deque")]
+use crate::util::injector::{InjectorChannel, Sender, Receiver};
+
 #[cfg(feature="std-mpmc")]
 use std::sync::mpmc::{Sender, Receiver};
 
@@ -147,6 +150,9 @@ static RUNINFO_CHANNEL: Lazy<(Sender<RunInfo>, Receiver<RunInfo>)> =
 
         #[cfg(feature="kanal")]
         return kanal::bounded(RUNINFO_CHANNEL_CAPACITY);
+
+        #[cfg(feature="crossbeam-deque")]
+        return InjectorChannel::bounded_split(RUNINFO_CHANNEL_CAPACITY);
 
         #[cfg(feature="std-mpmc")]
         return std::sync::mpmc::sync_channel(RUNINFO_CHANNEL_CAPACITY);
@@ -1003,6 +1009,10 @@ pub fn scheduler(
 
     let tx = get_runinfo_tx();
 
+    #[cfg(feature="crossbeam-deque")]
+    tx.send(RunInfo { runnable, info });
+
+    #[cfg(not(feature="crossbeam-deque"))]
     tx.send(RunInfo { runnable, info })
       .expect("unable to send Runnable to executors: channel closed");
 

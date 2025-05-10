@@ -305,7 +305,8 @@ pub mod injector {
     pub struct Inner<T> {
         bounded: Option<usize>,
         injector: Injector<T>,
-        push_event: Event,
+        send_event: Event,
+        recv_event: Event,
     }
 
     impl<T> fmt::Debug for Inner<T> {
@@ -313,7 +314,8 @@ pub mod injector {
             f.debug_struct("Inner")
              .field("bounded", &self.bounded)
              .field("injector", &self.injector)
-             .field("push_event", &self.push_event)
+             .field("send_event", &self.send_event)
+             .field("recv_event", &self.recv_event)
              .finish()
         }
     }
@@ -372,7 +374,8 @@ pub mod injector {
             Self(Arc::new(Inner {
                 bounded,
                 injector: Injector::new(),
-                push_event: Event::new(),
+                send_event: Event::new(),
+                recv_event: Event::new(),
             }))
         }
 
@@ -394,19 +397,38 @@ pub mod injector {
         }
 
         #[inline(always)]
-        pub fn send(&self, msg: T) -> bool {
+        pub fn try_send(&self, msg: T) -> Result<usize, T> {
             let len = self.len();
 
             if let Some(size) = self.bounded {
                 if len >= size {
-                    return false;
+                    return Err(msg);
                 }
             }
 
             self.injector.push(msg);
-            self.push_event.notify_relaxed(len.checked_add(1).unwrap_or(len));
+            Ok(self.send_event.notify_relaxed(len.checked_add(1).unwrap_or(len)))
+        }
 
-            true
+        #[inline(always)]
+        pub fn send(&self, mut msg: T) -> usize {
+            loop {
+                match self.try_send(msg) {
+                    Ok(count) => {
+                        return count;
+                    },
+                    Err(m) => {
+                        msg = m;
+
+                        // listener macro create listener on stack.
+                        // avoid recv_event.listener() due to it alloc heap.
+                        listener!(self.recv_event => recv_event_listener);
+
+                        // waiting until recv event happen.
+                        recv_event_listener.wait();
+                    }
+                }
+            }
         }
 
         #[inline(always)]
@@ -414,6 +436,7 @@ pub mod injector {
             loop {
                 match self.injector.steal() {
                     Steal::Success(msg) => {
+                        self.recv_event.notify_relaxed(1);
                         return Some(msg);
                     },
                     Steal::Empty => {
@@ -431,15 +454,16 @@ pub mod injector {
             loop {
                 match self.injector.steal() {
                     Steal::Success(msg) => {
+                        self.recv_event.notify_relaxed(1);
                         return msg;
                     },
                     Steal::Empty => {
                         // listener macro create listener on stack.
-                        // avoid push_event.listener() due to it alloc heap.
-                        listener!(self.push_event => push_event_listener);
+                        // avoid send_event.listener() due to it alloc heap.
+                        listener!(self.send_event => send_event_listener);
 
-                        // waiting until push event happen.
-                        push_event_listener.wait();
+                        // waiting until send event happen.
+                        send_event_listener.wait();
                     },
                     Steal::Retry => {
                         // operation needs retry.
@@ -462,15 +486,16 @@ pub mod injector {
             while now < deadline {
                 match self.injector.steal() {
                     Steal::Success(msg) => {
+                        self.recv_event.notify_relaxed(1);
                         return Some(msg);
                     },
                     Steal::Empty => {
                         // listener macro create listener on stack.
-                        // avoid push_event.listener() due to it alloc heap.
-                        listener!(self.push_event => push_event_listener);
+                        // avoid send_event.listener() due to it alloc heap.
+                        listener!(self.send_event => send_event_listener);
 
-                        // waiting until push event happen.
-                        push_event_listener.wait_timeout(deadline - now);
+                        // waiting until send event happen.
+                        send_event_listener.wait_deadline(deadline);
                     },
                     Steal::Retry => {
                         // operation needs retry.
@@ -484,8 +509,21 @@ pub mod injector {
         }
     }
 
-    #[derive(Debug, Clone)]
     pub struct Sender<T>(InjectorChannel<T>);
+
+    impl<T> fmt::Debug for Sender<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("Sender")
+             .field(&self.0)
+             .finish()
+        }
+    }
+
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
 
     impl<T> Sender<T> {
         #[inline(always)]
@@ -494,13 +532,31 @@ pub mod injector {
         }
 
         #[inline(always)]
-        pub fn send(&self, msg: T) -> bool {
+        pub fn try_send(&self, msg: T) -> Result<usize, T> {
+            self.0.try_send(msg)
+        }
+
+        #[inline(always)]
+        pub fn send(&self, msg: T) -> usize {
             self.0.send(msg)
         }
     }
 
-    #[derive(Debug, Clone)]
     pub struct Receiver<T>(InjectorChannel<T>);
+
+    impl<T> fmt::Debug for Receiver<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("Receiver")
+             .field(&self.0)
+             .finish()
+        }
+    }
+
+    impl<T> Clone for Receiver<T> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
 
     impl<T> Receiver<T> {
         #[inline(always)]

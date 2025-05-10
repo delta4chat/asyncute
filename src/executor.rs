@@ -186,11 +186,30 @@ impl Executor {
         let mut worked;
         let mut t = Instant::now();
 
+        #[cfg(not(feature="crossbeam-deque"))]
         let error_closed = Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "runinfo channel closed!"));
 
         loop {
             worked = false;
             loop {
+                #[cfg(feature="crossbeam-deque")]
+                match rx.try_recv() {
+                    Some(runinfo) => {
+                        if ! worked {
+                            worked = true;
+                            self.state.working.store(true, Relaxed);
+                        }
+
+                        self.run_one(runinfo, true);
+                    }
+
+                    _ => {
+                        // crossbeam-deque is always open and no "closed" state.
+                        break;
+                    }
+                }
+
+                #[cfg(not(feature="crossbeam-deque"))]
                 match rx.try_recv() {
                     Ok(runinfo) => {
                         #[cfg(feature="kanal")]
@@ -258,6 +277,20 @@ impl Executor {
                 log::trace!("{} not worked", self.state.id);
             }
 
+            #[cfg(feature="crossbeam-deque")]
+            match rx.recv_timeout(interval) {
+                Some(runinfo) => {
+                    if exitable {
+                        t = Instant::now();
+                    }
+                    self.run_one(runinfo, false);
+                },
+                _ => {
+                    // crossbeam-deque is always open and no "closed" state.
+                }
+            }
+
+            #[cfg(not(feature="crossbeam-deque"))]
             match rx.recv_timeout(interval) {
                 Ok(runinfo) => {
                     if exitable {

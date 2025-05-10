@@ -609,17 +609,7 @@ impl CPU {
                 .build();
             //);
 
-        #[cfg(feature="flume")]
-        let (ops_tx, ops_rx) = flume::bounded(self.tasks as usize);
-
-        #[cfg(feature="crossbeam-channel")]
-        let (ops_tx, ops_rx) = crossbeam_channel::bounded(self.tasks as usize);
-
-        #[cfg(feature="kanal")]
-        let (ops_tx, ops_rx) = kanal::bounded(self.tasks as usize);
-
-        #[cfg(feature="std-mpmc")]
-        let (ops_tx, ops_rx) = std::sync::mpmc::sync_channel(self.tasks as usize);
+        let (ops_tx, ops_rx) = std::sync::mpsc::sync_channel(self.tasks as usize);
 
         for i in 0 .. self.tasks {
             let ops_tx = ops_tx.clone();

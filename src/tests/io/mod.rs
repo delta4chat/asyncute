@@ -73,17 +73,7 @@ impl IO {
 
         let time = self.test_time;
 
-        #[cfg(feature="flume")]
-        let (ops_tx, ops_rx) = flume::bounded(self.tasks as usize);
-
-        #[cfg(feature="crossbeam-channel")]
-        let (ops_tx, ops_rx) = crossbeam_channel::bounded(self.tasks as usize);
-
-        #[cfg(feature="kanal")]
-        let (ops_tx, ops_rx) = kanal::bounded(self.tasks as usize);
-
-        #[cfg(feature="std-mpmc")]
-        let (ops_tx, ops_rx) = std::sync::mpmc::sync_channel(self.tasks as usize);
+        let (ops_tx, ops_rx) = std::sync::mpsc::sync_channel(self.tasks as usize);
 
         // create TCP server
         let tcp = smol::block_on(smol::net::TcpListener::bind("127.0.0.1:0")).unwrap();
