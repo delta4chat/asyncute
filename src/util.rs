@@ -664,6 +664,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
 
                 self.has[i].store(false, Relaxed);
                 if let Some(owned) = maybe_owned {
+                    self.len.checked_sub(1);
                     return Some(owned);
                 }
             }
