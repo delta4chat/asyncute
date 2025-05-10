@@ -2,7 +2,7 @@ pub use core::marker::{PhantomData, PhantomPinned};
 
 use core::{
     ops::{Range, Deref, DerefMut},
-    fmt::Debug,
+    fmt,
 };
 
 use std::{
@@ -293,6 +293,241 @@ pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) 
         ii += 1;
     }
     Some(out)
+}
+
+#[cfg(feature="crossbeam-deque")]
+pub mod injector {
+    use super::*;
+
+    use crossbeam_deque::{Injector, Steal};
+    use event_listener::{Event, Listener, listener};
+
+    pub struct Inner<T> {
+        bounded: Option<usize>,
+        injector: Injector<T>,
+        push_event: Event,
+    }
+
+    impl<T> fmt::Debug for Inner<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Inner")
+             .field("bounded", &self.bounded)
+             .field("injector", &self.injector)
+             .field("push_event", &self.push_event)
+             .finish()
+        }
+    }
+
+    pub struct InjectorChannel<T>(Arc<Inner<T>>);
+
+    impl<T> fmt::Debug for InjectorChannel<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("InjectorChannel")
+             .field(&self.0)
+             .finish()
+        }
+    }
+
+    impl<T> Clone for InjectorChannel<T> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
+
+    impl<T> Deref for InjectorChannel<T> {
+        type Target = Inner<T>;
+
+        fn deref(&self) -> &Inner<T> {
+            &self.0
+        }
+    }
+
+    impl<T> InjectorChannel<T> {
+        #[inline(always)]
+        pub fn unbounded() -> Self {
+            Self::new(None)
+        }
+
+        #[inline(always)]
+        pub fn unbounded_split() -> (Sender<T>, Receiver<T>) {
+            Self::unbounded().split()
+        }
+
+        #[inline(always)]
+        pub fn bounded(size: usize) -> Self {
+            Self::new(Some(size))
+        }
+
+        #[inline(always)]
+        pub fn bounded_split(size: usize) -> (Sender<T>, Receiver<T>) {
+            Self::bounded(size).split()
+        }
+
+        #[inline(always)]
+        pub fn new(bounded: Option<usize>) -> Self {
+            if let Some(size) = bounded {
+                assert!(size > 0);
+            }
+
+            Self(Arc::new(Inner {
+                bounded,
+                injector: Injector::new(),
+                push_event: Event::new(),
+            }))
+        }
+
+        #[inline(always)]
+        pub fn new_split(bounded: Option<usize>) -> (Sender<T>, Receiver<T>) {
+            Self::new(bounded).split()
+        }
+
+        #[inline(always)]
+        pub fn split(&self) -> (Sender<T>, Receiver<T>) {
+            let sender = Sender(self.clone());
+            let receiver = Receiver(self.clone());
+            (sender, receiver)
+        }
+
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.injector.len()
+        }
+
+        #[inline(always)]
+        pub fn send(&self, msg: T) -> bool {
+            let len = self.len();
+
+            if let Some(size) = self.bounded {
+                if len >= size {
+                    return false;
+                }
+            }
+
+            self.injector.push(msg);
+            self.push_event.notify_relaxed(len.checked_add(1).unwrap_or(len));
+
+            true
+        }
+
+        #[inline(always)]
+        pub fn try_recv(&self) -> Option<T> {
+            loop {
+                match self.injector.steal() {
+                    Steal::Success(msg) => {
+                        return Some(msg);
+                    },
+                    Steal::Empty => {
+                        return None;
+                    },
+                    Steal::Retry => {
+                        // operation needs retry.
+                    }
+                }
+            }
+        }
+
+        #[inline(always)]
+        pub fn recv(&self) -> T {
+            loop {
+                match self.injector.steal() {
+                    Steal::Success(msg) => {
+                        return msg;
+                    },
+                    Steal::Empty => {
+                        // listener macro create listener on stack.
+                        // avoid push_event.listener() due to it alloc heap.
+                        listener!(self.push_event => push_event_listener);
+
+                        // waiting until push event happen.
+                        push_event_listener.wait();
+                    },
+                    Steal::Retry => {
+                        // operation needs retry.
+                    }
+                }
+            }
+        }
+
+        #[inline(always)]
+        pub fn recv_timeout(&self, timeout: Duration) -> Option<T> {
+            match Instant::now().checked_add(timeout) {
+                Some(deadline) => self.recv_deadline(deadline),
+                _ => None,
+            }
+        }
+
+        #[inline(always)]
+        pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
+            let mut now = Instant::now();
+            while now < deadline {
+                match self.injector.steal() {
+                    Steal::Success(msg) => {
+                        return Some(msg);
+                    },
+                    Steal::Empty => {
+                        // listener macro create listener on stack.
+                        // avoid push_event.listener() due to it alloc heap.
+                        listener!(self.push_event => push_event_listener);
+
+                        // waiting until push event happen.
+                        push_event_listener.wait_timeout(deadline - now);
+                    },
+                    Steal::Retry => {
+                        // operation needs retry.
+                    }
+                }
+
+                now = Instant::now();
+            }
+
+            None
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Sender<T>(InjectorChannel<T>);
+
+    impl<T> Sender<T> {
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        #[inline(always)]
+        pub fn send(&self, msg: T) -> bool {
+            self.0.send(msg)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Receiver<T>(InjectorChannel<T>);
+
+    impl<T> Receiver<T> {
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        #[inline(always)]
+        pub fn try_recv(&self) -> Option<T> {
+            self.0.try_recv()
+        }
+
+        #[inline(always)]
+        pub fn recv(&self) -> T {
+            self.0.recv()
+        }
+
+        #[inline(always)]
+        pub fn recv_timeout(&self, timeout: Duration) -> Option<T> {
+            self.0.recv_timeout(timeout)
+        }
+
+        #[inline(always)]
+        pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
+            self.0.recv_deadline(deadline)
+        }
+    }
 }
 
 pub mod hack {
@@ -1086,7 +1321,7 @@ impl AtomicSocketAddr {
 }
 
 #[derive(Debug)]
-pub struct AtomicRange<AT: Debug> {
+pub struct AtomicRange<AT: fmt::Debug> {
     start: AT,
     end: AT,
 
@@ -1094,12 +1329,12 @@ pub struct AtomicRange<AT: Debug> {
 }
 
 #[derive(Debug)]
-pub struct AtomicRangeStrict<AT: Debug>(AtomicRange<AT>);
+pub struct AtomicRangeStrict<AT: fmt::Debug>(AtomicRange<AT>);
 
 #[derive(Debug, Clone)]
 pub struct NumIter<T>
 where
-    T: Debug + Clone + PartialOrd + ConstZero + ConstOne + Bounded + CheckedAdd + CheckedSub,
+    T: fmt::Debug + Clone + PartialOrd + ConstZero + ConstOne + Bounded + CheckedAdd + CheckedSub,
 {
     stopped: bool,
 
@@ -1113,7 +1348,7 @@ where
 
 impl<T> NumIter<T>
 where
-    T: Debug + Clone + PartialOrd + ConstZero + ConstOne + Bounded + CheckedAdd + CheckedSub + Euclid,
+    T: fmt::Debug + Clone + PartialOrd + ConstZero + ConstOne + Bounded + CheckedAdd + CheckedSub + Euclid,
 {
     #[inline(always)]
     pub fn new(current: T, until: T, step: T) -> Self {
@@ -1145,7 +1380,7 @@ where
 
 impl<T> Iterator for NumIter<T>
 where
-    T:  Debug
+    T:  fmt::Debug
         + Clone
         + PartialOrd
         + ConstZero
@@ -1204,7 +1439,7 @@ where
 
 macro_rules! atomic_range_impl {
     ($($atom:ty = $num:ident,)*) => {
-        impl<AT: Debug> AtomicRange<AT> {
+        impl<AT: fmt::Debug> AtomicRange<AT> {
             $(
                 #[inline(always)]
                 pub const fn $num() -> AtomicRange<$atom> {
@@ -1212,7 +1447,7 @@ macro_rules! atomic_range_impl {
                 }
             )*
         }
-        impl<AT: Debug> AtomicRangeStrict<AT> {
+        impl<AT: fmt::Debug> AtomicRangeStrict<AT> {
             $(
                 #[inline(always)]
                 pub const fn $num() -> AtomicRangeStrict<$atom> {
