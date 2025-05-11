@@ -323,7 +323,7 @@ pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) 
 }
 
 #[cfg(feature="crossbeam-deque")]
-/// helper of `crossbeam_deque::Injector` to support blocking wait (powered by `event_listener::Event`)
+/// helper of [`crossbeam_deque::Injector`] to support blocking wait (powered by [`event_listener::Event`])
 pub mod injector {
     use super::*;
 
@@ -888,7 +888,7 @@ macro_rules! gen_hash_write {
         #[repr(u8)]
         pub enum HashWrite {
             $(
-                #[doc = concat!("the ", stringify!($t), " value.")]
+                #[doc = concat!("the [`", stringify!($t), "`] value.")]
                 $v($t),
             )*
         }
