@@ -1,3 +1,5 @@
+//! executor.rs
+
 use crate::*;
 
 use std::{
@@ -6,13 +8,13 @@ use std::{
 };
 
 use portable_atomic::{
-    AtomicU32,
     AtomicBool,
     Ordering::Relaxed,
 };
 
 use once_cell::sync::OnceCell;
 
+/// common state between this executor and outside.
 #[derive(Debug)]
 pub(crate) struct ExecutorState {
     /// per-process unique ID for each executor.
@@ -40,6 +42,7 @@ pub(crate) struct ExecutorState {
 }
 
 impl ExecutorState {
+    /// create new ExecutorState.
     #[inline(always)]
     pub fn new(id: ExecutorId) -> Self {
         Self {
@@ -53,6 +56,7 @@ impl ExecutorState {
         }
     }
 
+    /// check if this executor is working (by running Runnable)
     #[inline(always)]
     pub fn is_working(&self) -> bool {
         self.working.load(Relaxed)
@@ -68,6 +72,9 @@ impl ExecutorState {
         working_time.as_secs_f64() / running_time.as_secs_f64()
     }
 
+    /// request the temporary executor to exit.
+    ///
+    /// do nothing if this executor is persist.
     #[inline(always)]
     pub fn exit(&self) -> Result<(), &'static str> {
         if self.exitable {
@@ -79,12 +86,13 @@ impl ExecutorState {
     }
 }
 
+/// the Executor of asyncute.
 #[derive(Debug)]
 pub struct Executor {
     /// variable for avoid double drop.
     dropped: bool,
 
-    /// store common state between executor and external caller.
+    /// common state between this executor and outside.
     state: Arc<ExecutorState>,
 
     /// channel receiver for receive runnable.
@@ -94,6 +102,7 @@ pub struct Executor {
 }
 
 impl Executor {
+    /// create new executor.
     #[inline(always)]
     pub(crate) const fn new(
         state: Arc<ExecutorState>,
@@ -129,6 +138,7 @@ impl Executor {
 
                 macro_rules! log_any {
                     ($($t:ty,)*) => {
+                        #[allow(deprecated)]
                         if false {
                         }
                         $(
@@ -171,6 +181,7 @@ impl Executor {
         }
     }
 
+    /// the execute loop of executor.
     #[inline(always)]
     pub fn run(self) -> std::io::Result<()> {
         let rx = &self.runinfo_rx;

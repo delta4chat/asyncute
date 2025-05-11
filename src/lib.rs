@@ -1,3 +1,5 @@
+#![doc = include_str!("README.md")]
+
 #![forbid(unsafe_code)]
 
 #![cfg_attr(not(test), warn(missing_docs))]
@@ -28,7 +30,6 @@ use core::{
 
 use std::{
     sync::Arc,
-    net::SocketAddr,
     time::{Instant, Duration},
 };
 
@@ -59,6 +60,7 @@ use portable_atomic::{
 };
 use once_cell::sync::Lazy;
 
+/// the inner of TaskInfo.
 #[derive(Debug)]
 pub struct TaskInfoInner {
     dropped: bool,
@@ -103,10 +105,12 @@ impl Drop for TaskInfoInner {
     }
 }
 
+/// the information associated to each Task and Runnable.
 #[derive(Debug, Clone)]
 pub struct TaskInfo(Arc<TaskInfoInner>);
 
 impl TaskInfo {
+    /// create new TaskInfo
     #[inline(always)]
     fn new(nice: i8) -> Self {
         Self (
@@ -124,22 +128,37 @@ impl Deref for TaskInfo {
     }
 }
 
+/// the `async_task::Task` type with `TaskInfo`
 pub type Task<T> = async_task::Task<T, TaskInfo>;
+
+/// the `async_task::Runnable` type with `TaskInfo`
 pub type Runnable = async_task::Runnable<TaskInfo>;
 
+/// alias type for Executor ID (currently u128).
 pub type ExecutorId = u128;
+
+/// alias type for Task ID (currently u128).
 pub type TaskId = u128;
 
+/// the global index of executor
 static EXECUTOR_INDEX: Lazy<scc2::HashIndex<ExecutorId, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
 
+/// the JoinHandle of monitor thread
 static MONITOR_THREAD_JH: scc2::Atom<std::thread::JoinHandle<()>> = scc2::Atom::init();
 
+/// the Runnable + ScheduleInfo from async-task
 pub(crate) struct RunInfo {
+    /// Runnable
     runnable: Runnable,
+
+    /// ScheduleInfo
     info: ScheduleInfo,
 }
 
+/// the maximum capacity of RunInfo global channel.
 pub const RUNINFO_CHANNEL_CAPACITY: usize = 1048576;
+
+/// the global queue of RunInfo.
 static RUNINFO_CHANNEL: Lazy<(Sender<RunInfo>, Receiver<RunInfo>)> =
     Lazy::new(|| {
         #[cfg(feature="flume")]
@@ -158,16 +177,19 @@ static RUNINFO_CHANNEL: Lazy<(Sender<RunInfo>, Receiver<RunInfo>)> =
         return std::sync::mpmc::sync_channel(RUNINFO_CHANNEL_CAPACITY);
     });
 
+/// get the global Runnable queue (sender & receiver)
 #[inline(always)]
 fn get_runinfo_channel() -> &'static (Sender<RunInfo>, Receiver<RunInfo>) {
     &*RUNINFO_CHANNEL
 }
 
+/// get the send side of global Runnable queue
 #[inline(always)]
 fn get_runinfo_tx() -> &'static Sender<RunInfo> {
     &(get_runinfo_channel().0)
 }
 
+/// get the receive side of global Runnable queue
 #[inline(always)]
 fn get_runinfo_rx() -> &'static Receiver<RunInfo> {
     &(get_runinfo_channel().1)
@@ -190,6 +212,7 @@ pub fn cpu_count() -> usize {
     count
 }
 
+/// the Profile of Runnable.
 pub struct RunnableProfile {
     last_update: AtomicInstant,
 
@@ -205,8 +228,10 @@ pub struct RunnableProfile {
     queue_frequency: AtomicF64,
 }
 impl RunnableProfile {
+    /// the minimum update interval of RunnableProfile.
     pub const UPDATE_INTERVAL: Duration = Duration::new(5, 0);
 
+    /// get the global instance of RunnableProfile.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: RunnableProfile =
@@ -285,6 +310,7 @@ impl RunnableProfile {
     }
 }
 
+/// the Profile of Future.
 pub struct FutureProfile {
     alive_count: AtomicU64,
     poll_count: AtomicU64,
@@ -292,6 +318,7 @@ pub struct FutureProfile {
     ready_count: AtomicU64,
 }
 impl FutureProfile {
+    /// get the global instance of FutureProfile.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: FutureProfile =
@@ -330,12 +357,19 @@ impl FutureProfile {
     }
 }
 
+/// the Profile of asyncute.
 pub struct Profile {
+    /// the started time of Profile.
     started: AtomicInstant,
+
+    /// RunnableProfile.
     pub runnable: &'static RunnableProfile,
+
+    /// FutureProfile.
     pub future: &'static FutureProfile,
 }
 impl Profile {
+    /// get the global instance of Profile.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: Profile =
@@ -348,16 +382,21 @@ impl Profile {
         &GLOBAL
     }
 
+    /// try to starting profile.
+    ///
+    /// return false if the profile already started.
     #[inline(always)]
     pub fn start(&self) -> bool {
         ProfileConfig::global().enable()
     }
 
+    /// stop the profile.
     #[inline(always)]
     pub fn stop(&self) {
         ProfileConfig::global().disable();
     }
 
+    /// check whether profile is started, and return the start time.
     #[inline(always)]
     pub fn started(&self) -> Option<Instant> {
         if ProfileConfig::global().is_enabled() {
@@ -368,6 +407,7 @@ impl Profile {
     }
 }
 
+/// Configuration of Profile.
 #[derive(Debug)]
 pub struct ProfileConfig {
     /// whether enables profile recording?
@@ -379,6 +419,7 @@ pub struct ProfileConfig {
     pub remote: AtomicSocketAddr,
 }
 impl ProfileConfig {
+    /// get the global instance of ProfileConfig.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ProfileConfig =
@@ -390,6 +431,9 @@ impl ProfileConfig {
         &GLOBAL
     }
 
+    /// to enable (start) the profile.
+    ///
+    /// return false if the profile already started.
     #[inline(always)]
     pub fn enable(&self) -> bool {
         if self.is_enabled() {
@@ -402,20 +446,23 @@ impl ProfileConfig {
         true
     }
 
+
+    /// to disable (stop) the profile.
     #[inline(always)]
     pub fn disable(&self) {
         self.enabled.store(false, Relaxed);
     }
 
+    /// check whether the profile is enabled.
     #[inline(always)]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Relaxed)
     }
 }
 
+/// Defines how the executor spawns additional threads to handle workload.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
-/// Defines how the executor spawns additional threads to handle workload.
 pub enum ExecutorSpawnPolicy {
     /// # "On-Demand"
     /// Conservative strategy: only spawns new temporary threads when the current load exceeds a configured threshold.
@@ -448,10 +495,16 @@ pub enum ExecutorSpawnPolicy {
 }
 
 impl ExecutorSpawnPolicy {
+    /// enum value of `Self::OnDemand`
     pub const ON_DEMAND: u8 = b'd';
+
+    /// enum value of `Self::Proactive`
     pub const PROACTIVE: u8 = b'p';
+
+    /// enum value of `Self::Fixed`
     pub const FIXED:     u8 = b'f';
 
+    /// try to create `ExecutorSpawnPolicy` from u8 value if valid.
     #[inline(always)]
     pub const fn new(val: u8) -> Option<Self> {
         match val {
@@ -462,6 +515,7 @@ impl ExecutorSpawnPolicy {
         }
     }
 
+    /// get the enum value of `ExecutorSpawnPolicy`.
     #[inline(always)]
     pub const fn value(self) -> u8 {
         match self {
@@ -471,6 +525,7 @@ impl ExecutorSpawnPolicy {
         }
     }
 
+    /// check whether this policy is "on-demand".
     #[inline(always)]
     pub const fn is_ondemand(self) -> bool {
         match self {
@@ -479,6 +534,7 @@ impl ExecutorSpawnPolicy {
         }
     }
 
+    /// check whether this policy is "proactive".
     #[inline(always)]
     pub const fn is_proactive(self) -> bool {
         match self {
@@ -487,6 +543,7 @@ impl ExecutorSpawnPolicy {
         }
     }
 
+    /// check whether this policy is "fixed".
     #[inline(always)]
     pub const fn is_fixed(self) -> bool {
         match self {
@@ -495,16 +552,19 @@ impl ExecutorSpawnPolicy {
         }
     }
 
+    /// convert to AtomicU8.
     #[inline(always)]
     pub const fn to_atomic(self) -> AtomicU8 {
         AtomicU8::new(self.value())
     }
 
+    /// load from AtomicU8.
     #[inline(always)]
     pub fn from_atomic(atom: &AtomicU8) -> Option<Self> {
         Self::new(atom.load(Relaxed))
     }
 
+    /// spawn one exitable executor if allowed.
     #[inline(always)]
     fn spawn_temporary_executor(self, status: &ExecutorStatus) -> bool {
         if self.is_fixed() {
@@ -572,6 +632,7 @@ impl ExecutorSpawnPolicy {
     }
 }
 
+/// Configuration of Executor.
 #[derive(Debug)]
 pub struct ExecutorConfig {
     /// `minimum..=maximum` number of total executor threads.
@@ -601,6 +662,7 @@ pub struct ExecutorConfig {
 }
 
 impl ExecutorConfig {
+    /// get the global instance of ExecutorConfig.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ExecutorConfig =
@@ -614,16 +676,19 @@ impl ExecutorConfig {
         &GLOBAL
     }
 
+    /// getter of spawn_policy
     #[inline(always)]
     pub fn spawn_policy(&self) -> ExecutorSpawnPolicy {
         ExecutorSpawnPolicy::from_atomic(&self.spawn_policy).expect("unexpected unknown variant of ExecutorSpawnPolicy")
     }
 
+    /// setter of spawn_policy
     #[inline(always)]
     pub fn set_spawn_policy(&self, policy: ExecutorSpawnPolicy) {
         self.spawn_policy.store(policy.value(), Relaxed);
     }
 
+    /// getter of overload_threshold
     #[inline(always)]
     pub fn overload_threshold(&self) -> f64 {
         let val = self.overload_threshold.load(Relaxed);
@@ -631,6 +696,7 @@ impl ExecutorConfig {
         val
     }
 
+    /// setter of overload_threshold
     #[inline(always)]
     pub fn set_overload_threshold(&self, val: f64) -> bool {
         // check special values
@@ -648,15 +714,20 @@ impl ExecutorConfig {
     }
 }
 
+/// Configuration of Monitor.
 #[derive(Debug)]
 pub struct MonitorConfig {
     interval: AtomicDuration,
 }
 
 impl MonitorConfig {
+    /// the minimum interval of monitor loop.
     pub const INTERVAL_MIN: Duration = Duration::new(1, 0);
+
+    /// the maximum interval of monitor loop.
     pub const INTERVAL_MAX: Duration = Duration::new(10, 0);
 
+    /// get the global instance of MonitorConfig.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: MonitorConfig =
@@ -667,6 +738,7 @@ impl MonitorConfig {
         &GLOBAL
     }
 
+    /// get the monitor interval
     #[inline(always)]
     pub fn interval(&self) -> Duration {
         self.interval.get()
@@ -696,6 +768,7 @@ pub struct Config {
 }
 
 impl Config {
+    /// get the global instance of Config.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: Config =
@@ -708,12 +781,14 @@ impl Config {
         &GLOBAL
     }
 
+    /// shortcut of `self.executor.total_threads_range.set_range(range)`
     #[inline(always)]
     pub fn set_threads(&self, range: Range<usize>) -> bool {
         self.executor.total_threads_range.set_range(range)
     }
 }
 
+/// the status snapshot of executors.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ExecutorStatus {
@@ -749,6 +824,7 @@ pub struct ExecutorStatus {
     pub work_load: Vec<(ExecutorId, f64)>,
 }
 impl ExecutorStatus {
+    /// create new empty status.
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -769,11 +845,13 @@ impl ExecutorStatus {
         }
     }
 
+    /// get the last update time of status.
     #[inline(always)]
-    pub const fn is_initialized(&self) -> bool {
-        self.last_update.is_some()
+    pub const fn last_update(&self) -> Option<Instant> {
+        self.last_update
     }
 
+    /// get the current status.
     #[inline(always)]
     pub fn current() -> Self {
         let mut this = Self::new();
@@ -781,7 +859,7 @@ impl ExecutorStatus {
         this
     }
 
-    /// return the status of current executors.
+    /// update the status of current executors.
     #[inline(always)]
     pub fn update(&mut self) -> &mut Self {
         self.total.clear();
@@ -840,6 +918,7 @@ impl ExecutorStatus {
     }
 }
 
+/// force to spawn new executor.
 #[inline(always)]
 pub fn spawn_executor(exitable: bool) {
     let id = gen_executor_id().expect("Executor ID exhausted!");
@@ -900,6 +979,7 @@ pub fn set_monitor_interval(interval: Duration) -> Duration {
     MonitorConfig::global().set_interval(interval)
 }
 
+/// the monitor loop.
 #[inline(always)]
 fn monitor_loop() {
     // for prevent monitor thread exit unexpectedly if before set Atom.
@@ -919,12 +999,15 @@ fn monitor_loop() {
 
         if let Some(jh) = MONITOR_THREAD_JH.get() {
             if jh.is_finished() {
+                start_monitor();
                 return;
             }
             if jh.thread().id() != current_thread_id {
+                start_monitor();
                 return;
             }
         } else {
+            start_monitor();
             return;
         }
 
@@ -999,6 +1082,7 @@ pub fn start_monitor() -> std::io::Result<()> {
     Ok(())
 }
 
+/// the scheduler of asyncute.
 #[inline(always)]
 pub fn scheduler(
     runnable: Runnable,
@@ -1020,9 +1104,7 @@ pub fn scheduler(
     log::trace!("scheduler sent. tx.len()={}", tx.len());
 
     if tx.len() > 100 || ExecutorConfig::global().spawn_policy().is_proactive() {
-        if let Some(jh) = MONITOR_THREAD_JH.get() {
-            jh.thread().unpark();
-        }
+        wake_monitor();
     }
 
     if ProfileConfig::global().is_enabled() {
@@ -1032,8 +1114,10 @@ pub fn scheduler(
     }
 }
 
+/// the `scheduler` function wrapped by `async_task::WithInfo`.
 const SCHEDULER: async_task::WithInfo<fn(Runnable, ScheduleInfo)> = async_task::WithInfo(scheduler);
 
+/// spawn new `Future` to asyncute, and return the Task handle associated to this Future.
 #[inline(always)]
 pub fn spawn<F>(f: F) -> Task<F::Output>
 where
@@ -1044,6 +1128,7 @@ where
         let _ = start_monitor();
     }
 
+    /// the wrapped future for profile.
     struct WrappedFuture<T, F: Future<Output=T>> {
         dropped: bool,
 
@@ -1052,6 +1137,7 @@ where
     }
 
     impl<T, F: Future<Output=T>> WrappedFuture<T, F> {
+        /// create new WrappedFuture.
         #[inline(always)]
         fn new(id: TaskId, f: F) -> Self {
             let mut this =

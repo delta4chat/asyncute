@@ -1,3 +1,5 @@
+//! util.rs
+
 pub use core::marker::{PhantomData, PhantomPinned};
 
 use core::{
@@ -8,7 +10,7 @@ use core::{
 use std::{
     net::{
         IpAddr, Ipv4Addr, Ipv6Addr,
-        SocketAddr, SocketAddrV4, SocketAddrV6,
+        SocketAddr,
     },
     time::{Instant, Duration},
     sync::Arc,
@@ -25,14 +27,27 @@ use num_traits::*;
 
 use scc2::ebr::AtomicOwned;
 
-pub type PhantomNonSend = PhantomData<std::sync::MutexGuard<'static, ()>>;
-pub type PhantomNonSync = PhantomData<core::cell::Cell<()>>;
-pub type PhantomNonSendSync = PhantomData<(*mut (), PhantomNonSync)>;
+// FIXME(hack) until the stabilize of #![feature(negative_impls)] 
 
+/// the PhantomData contains a !Send type.
+pub type PhantomNonSend = PhantomData<std::sync::MutexGuard<'static, ()>>;
+
+/// the PhantomData contains a !Sync type.
+pub type PhantomNonSync = PhantomData<core::cell::Cell<()>>;
+
+/// the PhantomData contains a !Send + !Sync type.
+pub type PhantomNonSendSync = PhantomData<(PhantomNonSend, PhantomNonSync)>;
+
+/// the PhantomData contains a !Send + !Unpin type.
 pub type PhantomNonSendUnpin = PhantomData<(PhantomNonSend, PhantomPinned)>;
+
+/// the PhantomData contains a !Sync + !Unpin type.
 pub type PhantomNonSyncUnpin = PhantomData<(PhantomNonSync, PhantomPinned)>;
+
+/// the PhantomData contains a !Send + !Sync + !Unpin type.
 pub type PhantomNonSendSyncUnpin = PhantomData<(PhantomNonSendSync, PhantomPinned)>;
 
+/// helper macro for use "try" (`?` operator) for Option in constant context.
 #[macro_export]
 macro_rules! option_try {
     ($c:expr) => {
@@ -45,6 +60,7 @@ macro_rules! option_try {
     }
 }
 
+/// helper macro for use Option::unwrap() in constant context.
 #[macro_export]
 macro_rules! option_unwrap {
     ($c:expr) => {
@@ -57,6 +73,7 @@ macro_rules! option_unwrap {
     }
 }
 
+/// helper macro for use "try" (`?` operator) for Result in constant context.
 #[macro_export]
 macro_rules! result_try {
     ($c:expr) => {
@@ -69,6 +86,7 @@ macro_rules! result_try {
     }
 }
 
+/// helper macro for use Result::unwrap() in constant context.
 #[macro_export]
 macro_rules! result_unwrap {
     ($c:expr) => {
@@ -83,17 +101,21 @@ macro_rules! result_unwrap {
 
 macro_rules! gen_atomic_checked {
     ($($op:ident,)*) => {
+        /// the "checked" version of atomic types.
         pub trait AtomicChecked {
+            /// the inner value of this Atomic type.
             type Item;
 
             $(
+                #[doc = concat!("the ", stringify!($op), " method.")]
                 fn $op(&self, val: Self::Item) -> Option<Self::Item>;
             )*
         }
 
-        // helper trait for float numbers
+        /// helper trait for float numbers
         trait Checked: Sized {
             $(
+                #[doc = concat!("the ", stringify!($op), " method.")]
                 fn $op(self, val: Self) -> Option<Self>;
             )*
         }
@@ -241,6 +263,7 @@ atomic_checked_impls!(
     AtomicF64   = f64,
 );
 
+/// check the equality of two byte slices in constant context.
 #[inline(always)]
 pub const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     let a_len = a.len();
@@ -259,11 +282,13 @@ pub const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+/// check the equality of two str in constant context.
 #[inline(always)]
 pub const fn str_eq(a: &str, b: &str) -> bool {
     bytes_eq(a.as_bytes(), b.as_bytes())
 }
 
+/// convert a part of slice to array.
 #[inline(always)]
 pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) -> Option<[T; N]> {
     let slice_len = slice.len();
@@ -298,12 +323,14 @@ pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) 
 }
 
 #[cfg(feature="crossbeam-deque")]
+/// helper of `crossbeam_deque::Injector` to support blocking wait (powered by `event_listener::Event`)
 pub mod injector {
     use super::*;
 
     use crossbeam_deque::{Injector, Steal};
     use event_listener::{Event, Listener, listener};
 
+    /// the private Inner of InjectorChannel
     pub struct Inner<T> {
         bounded: Option<usize>,
         injector: Injector<T>,
@@ -322,6 +349,7 @@ pub mod injector {
         }
     }
 
+    /// the "channel" backed by `Injector`.
     pub struct InjectorChannel<T>(Arc<Inner<T>>);
 
     impl<T> fmt::Debug for InjectorChannel<T> {
@@ -347,26 +375,31 @@ pub mod injector {
     }
 
     impl<T> InjectorChannel<T> {
+        /// create new InjectorChanel without the limit of maximum capacity.
         #[inline(always)]
         pub fn unbounded() -> Self {
             Self::new(None)
         }
 
+        /// create new paired (Sender, Receiver) of InjectorChannel without the limit of maximum capacity.
         #[inline(always)]
         pub fn unbounded_split() -> (Sender<T>, Receiver<T>) {
             Self::unbounded().split()
         }
 
+        /// create new InjectorChanel and limits the maximum capacity.
         #[inline(always)]
         pub fn bounded(size: usize) -> Self {
             Self::new(Some(size))
         }
 
+        /// create new paired (Sender, Receiver) of InjectorChannel and limits the maximum capacity.
         #[inline(always)]
         pub fn bounded_split(size: usize) -> (Sender<T>, Receiver<T>) {
             Self::bounded(size).split()
         }
 
+        /// create new InjectorChanel.
         #[inline(always)]
         pub fn new(bounded: Option<usize>) -> Self {
             if let Some(size) = bounded {
@@ -381,11 +414,13 @@ pub mod injector {
             }))
         }
 
+        /// create new paired (Sender, Receiver) of InjectorChannel.
         #[inline(always)]
         pub fn new_split(bounded: Option<usize>) -> (Sender<T>, Receiver<T>) {
             Self::new(bounded).split()
         }
 
+        /// split the InjectorChannel to (Sender, Receiver) pair.
         #[inline(always)]
         pub fn split(&self) -> (Sender<T>, Receiver<T>) {
             let sender = Sender(self.clone());
@@ -393,11 +428,15 @@ pub mod injector {
             (sender, receiver)
         }
 
+        /// Returns the number of messages in the channel.
         #[inline(always)]
         pub fn len(&self) -> usize {
             self.injector.len()
         }
 
+        /// try to send new message to channel.
+        /// * return Ok(usize) if the message has been sent, and return the number of notified receivers.
+        /// * return Err(T) if the channel is full and unable to send this message.
         #[inline(always)]
         pub fn try_send(&self, msg: T) -> Result<usize, T> {
             let len = self.len();
@@ -412,6 +451,10 @@ pub mod injector {
             Ok(self.send_event.notify_relaxed(len.checked_add(1).unwrap_or(len)))
         }
 
+        /// the blocking version of `try_send`.
+        /// * if channel is full, this method will blocking until have space.
+        /// * return the number of notified receivers.
+        /// NOTE: this method is without timeout or deadline, it will be blocking forever if no space available.
         #[inline(always)]
         pub fn send(&self, mut msg: T) -> usize {
             loop {
@@ -433,6 +476,46 @@ pub mod injector {
             }
         }
 
+        /// timeout version of `send`.
+        /// * if channel is full, this method will blocking until have space or timed out.
+        /// * the return value is same as `try_send`.
+        #[inline(always)]
+        pub fn send_timeout(&self, msg: T, timeout: Duration) -> Result<usize, T> {
+            match Instant::now().checked_add(timeout) {
+                Some(deadline) => self.send_deadline(msg, deadline),
+                _ => Err(msg),
+            }
+        }
+
+        /// deadline version of `send`.
+        /// * if channel is full, this method will blocking until have space or "current time is after the deadline".
+        /// * the return value is same as `try_send`.
+        #[inline(always)]
+        pub fn send_deadline(&self, mut msg: T, deadline: Instant) -> Result<usize, T> {
+            while Instant::now() < deadline {
+                match self.try_send(msg) {
+                    Ok(count) => {
+                        return Ok(count);
+                    },
+                    Err(m) => {
+                        msg = m;
+
+                        // listener macro create listener on stack.
+                        // avoid recv_event.listener() due to it alloc heap.
+                        listener!(self.recv_event => recv_event_listener);
+
+                        // waiting until recv event happen.
+                        recv_event_listener.wait_deadline(deadline);
+                    }
+                }
+            }
+
+            Err(msg)
+        }
+
+        /// try to receive one message from channel.
+        /// * return Some(T) if successfully to receive the message.
+        /// * return None if this channel is empty.
         #[inline(always)]
         pub fn try_recv(&self) -> Option<T> {
             loop {
@@ -451,6 +534,10 @@ pub mod injector {
             }
         }
 
+        /// the blocking version of `try_recv`.
+        /// * if there is no messages in channel, this method will blocking until have one.
+        /// * return the received message.
+        /// NOTE: this method is without timeout or deadline, it will be blocking forever if no messages available.
         #[inline(always)]
         pub fn recv(&self) -> T {
             loop {
@@ -474,6 +561,9 @@ pub mod injector {
             }
         }
 
+        /// timeout version of `recv`.
+        /// * if channel is empty, this method will blocking until have one or timed out.
+        /// * the return value is same as `try_recv`.
         #[inline(always)]
         pub fn recv_timeout(&self, timeout: Duration) -> Option<T> {
             match Instant::now().checked_add(timeout) {
@@ -482,10 +572,12 @@ pub mod injector {
             }
         }
 
+        /// deadline version of `recv`.
+        /// * if channel is empty, this method will blocking until have one or "current time is after the deadline".
+        /// * the return value is same as `try_recv`.
         #[inline(always)]
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
-            let mut now = Instant::now();
-            while now < deadline {
+            while Instant::now() < deadline {
                 match self.injector.steal() {
                     Steal::Success(msg) => {
                         self.recv_event.notify_relaxed(1);
@@ -503,14 +595,13 @@ pub mod injector {
                         // operation needs retry.
                     }
                 }
-
-                now = Instant::now();
             }
 
             None
         }
     }
 
+    /// the send side of InjectorChannel.
     pub struct Sender<T>(InjectorChannel<T>);
 
     impl<T> fmt::Debug for Sender<T> {
@@ -528,22 +619,38 @@ pub mod injector {
     }
 
     impl<T> Sender<T> {
+        /// see [`InjectorChannel::len()`].
         #[inline(always)]
         pub fn len(&self) -> usize {
             self.0.len()
         }
 
+        /// see [`InjectorChannel::try_send()`].
         #[inline(always)]
         pub fn try_send(&self, msg: T) -> Result<usize, T> {
             self.0.try_send(msg)
         }
 
+        /// see [`InjectorChannel::send()`].
         #[inline(always)]
         pub fn send(&self, msg: T) -> usize {
             self.0.send(msg)
         }
+
+        /// see [`InjectorChannel::send_timeout()`].
+        #[inline(always)]
+        pub fn send_timeout(&self, msg: T, timeout: Duration) -> Result<usize, T> {
+            self.0.send_timeout(msg, timeout)
+        }
+
+        /// see [`InjectorChannel::send_deadline()`].
+        #[inline(always)]
+        pub fn send_deadline(&self, msg: T, deadline: Instant) -> Result<usize, T> {
+            self.0.send_deadline(msg, deadline)
+        }
     }
 
+    /// the receive side of InjectorChannel.
     pub struct Receiver<T>(InjectorChannel<T>);
 
     impl<T> fmt::Debug for Receiver<T> {
@@ -561,26 +668,31 @@ pub mod injector {
     }
 
     impl<T> Receiver<T> {
+        /// see [`InjectorChannel::len()`].
         #[inline(always)]
         pub fn len(&self) -> usize {
             self.0.len()
         }
 
+        /// see [`InjectorChannel::try_recv()`].
         #[inline(always)]
         pub fn try_recv(&self) -> Option<T> {
             self.0.try_recv()
         }
 
+        /// see [`InjectorChannel::recv()`].
         #[inline(always)]
         pub fn recv(&self) -> T {
             self.0.recv()
         }
 
+        /// see [`InjectorChannel::recv_timeout()`].
         #[inline(always)]
         pub fn recv_timeout(&self, timeout: Duration) -> Option<T> {
             self.0.recv_timeout(timeout)
         }
 
+        /// see [`InjectorChannel::recv_deadline()`].
         #[inline(always)]
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
             self.0.recv_deadline(deadline)
@@ -588,12 +700,16 @@ pub mod injector {
     }
 }
 
+/// the "unordered set" similar to scc::Bag but without the limit of maximum capacity.
 pub struct Storage<T, const N: usize> {
     array: [AtomicOwned<T>; N],
     has: [AtomicBool; N],
     len: AtomicUsize,
 }
 impl<T: 'static, const N: usize> Storage<T, N> {
+    /// create new empty [`Storage`].
+    ///
+    /// panic if N == 0.
     pub const fn new() -> Self {
         assert!(N > 0);
 
@@ -604,10 +720,12 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         }
     }
 
+    /// the current length of items in Storage.
     pub fn len(&self) -> usize {
         self.len.load(Relaxed)
     }
 
+    /// push item to Storage.
     pub fn push(&self, item: T) -> bool {
         use scc2::ebr::{Ptr, Owned, Tag};
 
@@ -631,7 +749,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
                     &g
                 )
             {
-                Ok((prev, new)) => {
+                Ok((prev, _new)) => {
                     assert!(prev.is_none());
                     self.has[i].store(true, Relaxed);
                     self.len.checked_add(1);
@@ -648,6 +766,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         false
     }
 
+    /// pop item from Storage.
     pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
         let len = self.len();
         if len == 0 {
@@ -673,6 +792,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
     }
 }
 
+/// some hacky methods
 pub mod hack {
     use super::*;
 
@@ -763,10 +883,12 @@ pub mod hack {
 
 macro_rules! gen_hash_write {
     ($($v:ident = $t:ty,)*) => {
+        /// the value types written to hasher.
         #[derive(Debug, Clone)]
         #[repr(u8)]
         pub enum HashWrite {
             $(
+                #[doc = concat!("the ", stringify!($t), " value.")]
                 $v($t),
             )*
         }
@@ -823,12 +945,16 @@ gen_hash_write!(
     Isize = isize,
 );
 
+/// A pseudo-hasher that used by dump the internal or private field of provided value.
+///
+/// this DumpHasher does not doing hash data anymore, it just save all of data passed to Hasher trait to a Vec.
 #[derive(Debug, Clone)]
 pub struct DumpHasher {
     data: Vec<HashWrite>,
 }
 
 impl DumpHasher {
+    /// create new DumpHasher instance.
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -836,6 +962,7 @@ impl DumpHasher {
         }
     }
 
+    /// get the data before hashed.
     #[inline(always)]
     pub const fn data<'a>(&'a self) -> &'a Vec<HashWrite> {
         &(self.data)
@@ -878,6 +1005,7 @@ dump_hasher_impl!(
     write_isize = isize,
 );
 
+/// the atomic version of Duration.
 #[derive(Debug)]
 pub struct AtomicDuration {
     total_ns: AtomicU128,
@@ -892,8 +1020,10 @@ impl Default for AtomicDuration {
 }
 
 impl AtomicDuration {
+    /// one second is equal to one billion nanoseconds.
     const NANOS_PER_SEC: u128 = 1_000_000_000;
 
+    /// convert from seconds to nanoseconds.
     #[inline(always)]
     const fn secs_to_nanos(s: u64) -> u128 {
         // this is safe due to (18446744073709551615_000_000_000 < u128::MAX)
@@ -908,11 +1038,13 @@ impl AtomicDuration {
         Duration::new(secs, subsec_nanos)
     }
 
+    /// return the zero (default) value of AtomicDuration.
     #[inline(always)]
     pub const fn zero() -> Self {
         Self::new(0, 0)
     }
 
+    /// create new AtomicDuration with seconds and (subsecond) nanos.
     #[inline(always)]
     pub const fn new(s: u64, n: u32) -> Self {
         let ns = Self::secs_to_nanos(s) + (n as u128);
@@ -922,6 +1054,7 @@ impl AtomicDuration {
         }
     }
 
+    /// create new AtomicDuration with trace whether it's changed.
     #[inline(always)]
     pub const fn new_with_trace(s: u64, n: u32) -> Self {
         let mut this = Self::new(s, n);
@@ -929,22 +1062,26 @@ impl AtomicDuration {
         this
     }
 
+    /// make this instance of AtomicDuration to trace change.
     #[inline(always)]
     pub const fn trace_change(&mut self) -> &mut Self {
         self.changed = Some(AtomicBool::new(false));
         self
     }
 
+    /// set seconds of this AtomicDuration.
     #[inline(always)]
     pub fn set_secs(&self, s: u64) -> &Self {
         self.set(Duration::new(s, self.subsec_nanos()))
     }
 
+    /// set sub-seconds (unit nanoseconds) of this AtomicDuration.
     #[inline(always)]
     pub fn set_subsec_nanos(&self, n: u32) -> &Self {
         self.set(Duration::new(self.as_secs(), n))
     }
 
+    /// set seconds + subseconds (by Duration) of this AtomicDuration.
     #[inline(always)]
     pub fn set(&self, d: Duration) -> &Self {
         self.total_ns.store(d.as_nanos(), Relaxed);
@@ -954,6 +1091,7 @@ impl AtomicDuration {
         self
     }
 
+    /// add seconds to this AtomicDuration.
     #[inline(always)]
     pub fn add_secs(&self, s: u64) -> &Self {
         if self.total_ns.checked_add(Self::secs_to_nanos(s)).is_some() {
@@ -964,6 +1102,8 @@ impl AtomicDuration {
         self
     }
 
+    /// add nanoseconds to this AtomicDuration.
+    /// if `n > 1_000_000_000`, extra seconds will be added to AtomicDuration.
     #[inline(always)]
     pub fn add_nanos(&self, n: u128) -> &Self {
         if self.total_ns.checked_add(n).is_some() {
@@ -974,6 +1114,7 @@ impl AtomicDuration {
         self
     }
 
+    /// add Duration to this AtomicDuration.
     #[inline(always)]
     pub fn add(&self, d: Duration) -> &Self {
         if self.total_ns.checked_add(d.as_nanos()).is_some() {
@@ -984,6 +1125,7 @@ impl AtomicDuration {
         self
     }
 
+    /// sub Duration to this AtomicDuration.
     #[inline(always)]
     pub fn sub(&self, d: Duration) -> &Self {
         if self.total_ns.checked_sub(d.as_nanos()).is_some() {
@@ -994,16 +1136,19 @@ impl AtomicDuration {
         self
     }
 
+    /// get the seconds (without subseconds) of this AtomicDuration.
     #[inline(always)]
     pub fn as_secs(&self) -> u64 {
         self.get().as_secs()
     }
 
+    /// get the subseconds (without seconds) of this AtomicDuration.
     #[inline(always)]
     pub fn subsec_nanos(&self) -> u32 {
         self.get().subsec_nanos()
     }
 
+    /// get the Duration from this AtomicDuration.
     #[inline(always)]
     pub fn get(&self) -> Duration {
         Self::duration_from_nanos(self.total_ns.load(Relaxed))
@@ -1024,6 +1169,7 @@ impl AtomicDuration {
     }
 }
 
+/// the atomic version of [`Instant`].
 #[derive(Debug)]
 pub struct AtomicInstant {
     anchor: OnceCell<Instant>,
@@ -1033,11 +1179,19 @@ pub struct AtomicInstant {
 }
 
 impl AtomicInstant {
+    /// No Operation.
     pub const OP_NOP:     u8 = b'=';
+
+    /// Add offset to anchor.
     pub const OP_ADD:     u8 = b'+';
+
+    /// Sub offset from anchor.
     pub const OP_SUB:     u8 = b'-';
+
+    /// intermediate state.
     pub const OP_PENDING: u8 = b'.';
 
+    /// create new un-initialized AtomicInstant.
     #[inline(always)]
     pub const fn init() -> Self {
         Self {
@@ -1048,6 +1202,7 @@ impl AtomicInstant {
         }
     }
 
+    /// create new AtomicInstant from currently monotonic time from [`Instant::now()`].
     #[inline(always)]
     pub const fn init_now() -> Self {
         let mut this = Self::init();
@@ -1055,6 +1210,7 @@ impl AtomicInstant {
         this
     }
 
+    /// create new AtomicInstant with provided value.
     #[inline(always)]
     pub const fn new(anchor: Instant) -> Self {
         let mut this = Self::init();
@@ -1062,31 +1218,37 @@ impl AtomicInstant {
         this
     }
 
+    /// create and initialize the "zero" value of AtomicInstant.
     #[inline(always)]
     pub fn zero() -> Self {
         Self::new(hack::instant_zero())
     }
 
+    /// create and initialize the "now" value of AtomicInstant.
     #[inline(always)]
     pub fn now() -> Self {
         Self::new(Instant::now())
     }
 
+    /// try to peek the anchor value without initialize it.
     #[inline(always)]
     pub fn peek_anchor(&self) -> Option<Instant> {
         self.anchor.get().copied()
     }
 
+    /// get the anchor value or initialize it.
     #[inline(always)]
     pub fn anchor(&self) -> Instant {
         *(self.anchor.get_or_init(if self.init_zero { hack::instant_zero } else { Instant::now }))
     }
 
+    /// get the current offset value of AtomicInstant.
     #[inline(always)]
     pub fn offset(&self) -> Duration {
         self.offset.get()
     }
 
+    /// get the operation "flag".
     #[inline(always)]
     pub fn op(&self) -> u8 {
         let mut op;
@@ -1098,6 +1260,7 @@ impl AtomicInstant {
         }
     }
 
+    /// lock the operation "flag".
     #[inline(always)]
     fn op_lock(&self) -> u8 {
         let mut op;
@@ -1111,6 +1274,7 @@ impl AtomicInstant {
         }
     }
 
+    /// set this AtomicInstant.
     #[inline(always)]
     pub fn set(&self, t: Instant) -> &Self {
         self.op_lock();
@@ -1131,17 +1295,20 @@ impl AtomicInstant {
         self
     }
 
+    /// get this AtomicInstant.
     #[inline(always)]
     pub fn get(&self) -> Instant {
         self._calc(self.anchor())
     }
 
+    /// peek the Instant without initialize it.
     #[inline(always)]
     pub fn peek(&self) -> Option<Instant> {
         let anchor = self.peek_anchor()?;
         Some(self._calc(anchor))
     }
 
+    /// calculate anchor +/- (add or sub) of offset
     #[inline(always)]
     fn _calc(&self, anchor: Instant) -> Instant {
         let op = self.op();
@@ -1161,6 +1328,7 @@ impl AtomicInstant {
         }
     }
 
+    /// add (+) Duration to AtomicInstant.
     #[inline(always)]
     pub fn add(&self, d: Duration) -> &Self {
         let mut op = self.op_lock();
@@ -1190,6 +1358,7 @@ impl AtomicInstant {
         self
     }
 
+    /// sub (-) Duration to AtomicInstant.
     #[inline(always)]
     pub fn sub(&self, d: Duration) -> &Self {
         let mut op = self.op_lock();
@@ -1220,16 +1389,19 @@ impl AtomicInstant {
     }
 }
 
+/// the atomic version of [`Ipv4Addr`].
 #[derive(Debug)]
 pub struct AtomicIpv4Addr {
     bits: AtomicU32,
 }
 impl AtomicIpv4Addr {
+    /// the default value (0.0.0.0) of AtomicIpv4Addr.
     #[inline(always)]
     pub const fn default() -> Self {
         Self::new(Ipv4Addr::UNSPECIFIED)
     }
 
+    /// create AtomicIpv4Addr with provided value.
     #[inline(always)]
     pub const fn new(ip4: Ipv4Addr) -> Self {
         Self {
@@ -1240,38 +1412,45 @@ impl AtomicIpv4Addr {
         }
     }
 
+    /// get bits of AtomicIpv4Addr.
     #[inline(always)]
     pub fn get_bits(&self) -> u32 {
         self.bits.load(Relaxed)
     }
 
+    /// set bits of AtomicIpv4Addr.
     #[inline(always)]
     pub fn set_bits(&self, bits: u32) -> &Self {
         self.bits.store(bits, Relaxed);
         self
     }
 
+    /// get Ipv4Addr from AtomicIpv4Addr.
     #[inline(always)]
     pub fn get(&self) -> Ipv4Addr {
         Ipv4Addr::from(self.get_bits().to_be_bytes())
     }
 
+    /// set Ipv4Addr from AtomicIpv4Addr.
     #[inline(always)]
     pub fn set(&self, ip4: Ipv4Addr) -> &Self {
         self.set_bits(u32::from_be_bytes(ip4.octets()))
     }
 }
 
+/// the atomic version of Ipv6Addr.
 #[derive(Debug)]
 pub struct AtomicIpv6Addr {
     bits: AtomicU128,
 }
 impl AtomicIpv6Addr {
+    /// the default value (::) of AtomicIpv6Addr.
     #[inline(always)]
     pub const fn default() -> Self {
         Self::new(Ipv6Addr::UNSPECIFIED)
     }
 
+    /// create new AtomicIpv6Addr from provided value.
     #[inline(always)]
     pub const fn new(ip6: Ipv6Addr) -> Self {
         Self {
@@ -1282,28 +1461,33 @@ impl AtomicIpv6Addr {
         }
     }
 
+    /// get bits of AtomicIpv6Addr.
     #[inline(always)]
     pub fn get_bits(&self) -> u128 {
         self.bits.load(Relaxed)
     }
 
+    /// set bits of AtomicIpv6Addr.
     #[inline(always)]
     pub fn set_bits(&self, bits: u128) -> &Self {
         self.bits.store(bits, Relaxed);
         self
     }
 
+    /// get Ipv6Addr from AtomicIpv6Addr.
     #[inline(always)]
     pub fn get(&self) -> Ipv6Addr {
         Ipv6Addr::from(self.get_bits().to_be_bytes())
     }
 
+    /// set Ipv6Addr from AtomicIpv6Addr.
     #[inline(always)]
     pub fn set(&self, ip6: Ipv6Addr) -> &Self {
         self.set_bits(u128::from_be_bytes(ip6.octets()))
     }
 }
 
+/// the atomic version of IpAddr.
 #[derive(Debug)]
 pub struct AtomicIpAddr {
     kind: AtomicU8,
@@ -1311,15 +1495,22 @@ pub struct AtomicIpAddr {
 }
 
 impl AtomicIpAddr {
+    /// IPv4.
     pub const KIND_IPV4:    u8 = 4;
+
+    /// IPv6.
     pub const KIND_IPV6:    u8 = 6;
+
+    /// intermediate state.
     pub const KIND_PENDING: u8 = 0xfe;
 
+    /// default value (0.0.0.0) of AtomicIpAddr.
     #[inline(always)]
     pub const fn default() -> Self {
         Self::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
     }
 
+    /// create new AtomicIpAddr from provided value.
     #[inline(always)]
     pub const fn new(ip: IpAddr) -> Self {
         let (kind, data) = Self::ip2tuple(ip);
@@ -1329,6 +1520,7 @@ impl AtomicIpAddr {
         }
     }
 
+    /// convert IpAddr to (kind, data)
     #[inline(always)]
     const fn ip2tuple(ip: IpAddr) -> (u8, u128) {
         let kind;
@@ -1352,26 +1544,31 @@ impl AtomicIpAddr {
         (kind, u128::from_be_bytes(data))
     }
 
+    /// the kind of IpAddr.
     #[inline(always)]
     pub fn kind(&self) -> u8 {
         self.kind.load(Relaxed)
     }
 
+    /// whether is AtomicIpAddr is IPv4?
     #[inline(always)]
     pub fn is_ipv4(&self) -> bool {
         self.kind() == Self::KIND_IPV4
     }
 
+    /// whether is AtomicIpAddr is IPv6?
     #[inline(always)]
     pub fn is_ipv6(&self) -> bool {
         self.kind() == Self::KIND_IPV6
     }
 
+    /// data part of AtomicIpAddr.
     #[inline(always)]
     fn data(&self) -> u128 {
         self.data.load(Relaxed)
     }
 
+    /// get IpAddr from AtomicIpAddr.
     #[inline(always)]
     pub fn get(&self) -> IpAddr {
         let mut k;
@@ -1399,6 +1596,7 @@ impl AtomicIpAddr {
         }
     }
 
+    /// set IpAddr from AtomicIpAddr.
     #[inline(always)]
     pub fn set(&self, ip: IpAddr) -> &Self {
         self.kind.store(Self::KIND_PENDING, Relaxed);
@@ -1412,6 +1610,7 @@ impl AtomicIpAddr {
     }
 }
 
+/// the atomic version of [`SocketAddr`].
 #[derive(Debug)]
 pub struct AtomicSocketAddr {
     ready: AtomicBool,
@@ -1420,11 +1619,13 @@ pub struct AtomicSocketAddr {
 }
 
 impl AtomicSocketAddr {
+    /// default value (0.0.0.0:0) of AtomicSocketAddr.
     #[inline(always)]
     pub const fn default() -> Self {
         Self::new(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
     }
 
+    /// create new AtomicSocketAddr from provided value.
     #[inline(always)]
     pub const fn new(addr: SocketAddr) -> Self {
         Self {
@@ -1434,16 +1635,19 @@ impl AtomicSocketAddr {
         }
     }
 
+    /// get the IP address of this AtomicSocketAddr.
     #[inline(always)]
     pub fn ip(&self) -> IpAddr {
         self.ip.get()
     }
 
+    /// get the port of this AtomicSocketAddr.
     #[inline(always)]
     pub fn port(&self) -> u16 {
         self.port.load(Relaxed)
     }
 
+    /// get SocketAddr from this AtomicSocketAddr.
     #[inline(always)]
     pub fn get(&self) -> SocketAddr {
         while ! self.ready.load(Relaxed) {
@@ -1452,6 +1656,7 @@ impl AtomicSocketAddr {
         SocketAddr::new(self.ip(), self.port())
     }
 
+    /// set SocketAddr from this AtomicSocketAddr.
     #[inline(always)]
     pub fn set(&self, addr: SocketAddr) -> &Self {
         self.ready.store(false, Relaxed);
@@ -1463,6 +1668,7 @@ impl AtomicSocketAddr {
     }
 }
 
+/// the atomic version of [`Range`].
 #[derive(Debug)]
 pub struct AtomicRange<AT: fmt::Debug> {
     start: AT,
@@ -1471,9 +1677,11 @@ pub struct AtomicRange<AT: fmt::Debug> {
     strict: bool,
 }
 
+/// strict version of AtomicRange.
 #[derive(Debug)]
 pub struct AtomicRangeStrict<AT: fmt::Debug>(AtomicRange<AT>);
 
+/// number iterator.
 #[derive(Debug, Clone)]
 pub struct NumIter<T>
 where
@@ -1488,11 +1696,11 @@ where
     incr: bool,
 }
 
-
 impl<T> NumIter<T>
 where
     T: fmt::Debug + Clone + PartialOrd + ConstZero + ConstOne + Bounded + CheckedAdd + CheckedSub + Euclid,
 {
+    /// create new NumIter.
     #[inline(always)]
     pub fn new(current: T, until: T, step: T) -> Self {
         Self {
@@ -1505,6 +1713,7 @@ where
         }
     }
 
+    /// the remaining size of NumIter.
     #[inline(always)]
     pub fn size(&self) -> T {
         let space =
@@ -1584,6 +1793,7 @@ macro_rules! atomic_range_impl {
     ($($atom:ty = $num:ident,)*) => {
         impl<AT: fmt::Debug> AtomicRange<AT> {
             $(
+                #[doc = concat!("create AtomicRange with ", stringify!($num), " value.")]
                 #[inline(always)]
                 pub const fn $num() -> AtomicRange<$atom> {
                     AtomicRange::<$atom>::default()
@@ -1592,6 +1802,7 @@ macro_rules! atomic_range_impl {
         }
         impl<AT: fmt::Debug> AtomicRangeStrict<AT> {
             $(
+                #[doc = concat!("create AtomicRangeStrict with ", stringify!($num), " value.")]
                 #[inline(always)]
                 pub const fn $num() -> AtomicRangeStrict<$atom> {
                     AtomicRangeStrict::<$atom>::default()
@@ -1614,6 +1825,7 @@ macro_rules! atomic_range_impl {
             }
 
             impl AtomicRange<$atom> {
+                /// default value (0..0) of AtomicRange.
                 #[inline(always)]
                 pub const fn default() -> Self {
                     const ZERO: $num = 0u8 as $num;
@@ -1625,6 +1837,7 @@ macro_rules! atomic_range_impl {
                     }
                 }
 
+                /// create new AtomicRange.
                 #[inline(always)]
                 pub const fn new(start: $num, end: $num) -> Self {
                     Self {
@@ -1635,27 +1848,32 @@ macro_rules! atomic_range_impl {
                     }
                 }
 
+                /// convert Range to AtomicRange.
                 #[inline(always)]
                 pub const fn from_range(val: Range<$num>) -> Self {
                     Self::new(val.start, val.end)
                 }
 
+                /// make this AtomicRange strictly. this is cannot undo.
                 #[inline(always)]
                 pub const fn strict(&mut self) -> &mut Self {
                     self.strict = true;
                     self
                 }
 
+                /// the start value of AtomicRange.
                 #[inline(always)]
                 pub fn start(&self) -> $num {
                     self.start.load(Relaxed)
                 }
 
+                /// the (excluded) end value of AtomicRange.
                 #[inline(always)]
                 pub fn end(&self) -> $num {
                     self.end.load(Relaxed)
                 }
 
+                /// get Range from this AtomicRange.
                 #[inline(always)]
                 pub fn range(&self) -> Range<$num> {
                     Range {
@@ -1664,6 +1882,7 @@ macro_rules! atomic_range_impl {
                     }
                 }
 
+                /// set the start value of AtomicRange.
                 #[inline(always)]
                 pub fn set_start(&self, val: $num) -> bool {
                     if self.strict {
@@ -1676,6 +1895,7 @@ macro_rules! atomic_range_impl {
                     true
                 }
 
+                /// set the end value of AtomicRange.
                 #[inline(always)]
                 pub fn set_end(&self, val: $num) -> bool {
                     if self.strict {
@@ -1688,6 +1908,7 @@ macro_rules! atomic_range_impl {
                     true
                 }
 
+                /// set Range to this AtomicRange.
                 #[inline(always)]
                 pub fn set_range(&self, val: Range<$num>) -> bool {
                     if self.strict {
@@ -1715,11 +1936,13 @@ macro_rules! atomic_range_impl {
                     self.start() > self.end()
                 }
 
+                /// create iterator from this AtomicRange.
                 #[inline(always)]
                 pub fn iter(&self) -> NumIter<$num> {
                     NumIter::new(self.start(), self.end(), $num::ONE)
                 }
 
+                /// whether this AtomicRange contains the provided value?
                 #[inline(always)]
                 pub fn contains(&self, val: $num) -> bool {
                     let start = self.start();
@@ -1735,6 +1958,7 @@ macro_rules! atomic_range_impl {
             }
 
             impl AtomicRangeStrict<$atom> {
+                /// default value (0..1) of AtomicRangeStrict.
                 #[inline(always)]
                 pub const fn default() -> Self {
                     Self(AtomicRange {
@@ -1745,6 +1969,7 @@ macro_rules! atomic_range_impl {
                     })
                 }
 
+                /// create new AtomicRangeStrict.
                 #[inline(always)]
                 pub const fn new(start: $num, end: $num) -> Self {
                     if start >= end {
@@ -1786,6 +2011,7 @@ atomic_range_impl!(
     AtomicU128  = u128,
 );
 
+/// unused. "stable clock" that does not jump during system hibernate.
 #[derive(Debug)]
 pub struct StableClock {
     started_elapsed: scc2::Atom<(Instant, AtomicDuration)>,
@@ -1793,19 +2019,22 @@ pub struct StableClock {
     join_handle: std::thread::JoinHandle<()>,
 }
 
-static GLOBAL_STABLE_CLOCK: Lazy<StableClock> = Lazy::new(StableClock::default);
-
 impl StableClock {
+    /// get the global instance of StableClock.
     #[inline(always)]
     pub fn global() -> &'static Self {
-        &*GLOBAL_STABLE_CLOCK
+        static GLOBAL: Lazy<StableClock> = Lazy::new(StableClock::default);
+
+        &*GLOBAL
     }
 
+    /// whether the time is jumped?
     #[inline(always)]
     pub fn is_time_jumped(&self) -> bool {
         self.time_diff() > (self.tick * 10)
     }
 
+    /// the different between StableClock and Instant now.
     #[inline(always)]
     pub fn time_diff(&self) -> Duration {
         let stable_now = self.now();
@@ -1818,6 +2047,7 @@ impl StableClock {
         }
     }
 
+    /// the "stable" now.
     #[inline(always)]
     pub fn now(&self) -> Instant {
         if self.join_handle.is_finished() {
@@ -1829,11 +2059,13 @@ impl StableClock {
         (*started) + elapsed
     }
 
+    /// private default of StableClock.
     #[inline(always)]
     fn default() -> Self {
         Self::new(Duration::from_millis(100))
     }
 
+    /// private new of StableClock.
     #[inline(always)]
     fn new(tick: Duration) -> Self {
         let started_elapsed = scc2::Atom::new((Instant::now(), AtomicDuration::new(0, 0)));
@@ -1865,3 +2097,4 @@ impl StableClock {
         }
     }
 }
+

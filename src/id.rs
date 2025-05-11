@@ -1,3 +1,5 @@
+//! id.rs
+
 use crate::*;
 
 use std::{
@@ -7,6 +9,7 @@ use std::{
 
 use portable_atomic::AtomicU64;
 
+/// the namespaced ID generator.
 pub struct ID {
     // the 64-bit prefix (name space) of u128 id.
     prefix: u128,
@@ -102,9 +105,11 @@ impl ID {
     /// * memory address of some types defined in static, runtime, or alloc.
     /// * current UNIX timestamp and monotonic timestamp.
     /// * sleep jitter.
+    /// * pre-defined seed.
     #[inline(always)]
     pub fn auto_ns() -> Self {
         // NonClone is not derived Copy or Clone trait, so it's unclonable.
+        #[allow(dead_code)]
         struct NonClone(u8);
 
         static SEED: u128 = 36737317109501180927066999484774518054;
@@ -143,6 +148,7 @@ impl ID {
         }
     }
 
+    /// try to generate new ID. returns None if exhausted the 64-bit counter.
     #[inline(always)]
     pub fn generate(&self) -> Option<u128> {
         let count = self.counter.checked_add(1)?;
@@ -153,20 +159,28 @@ impl ID {
     }
 }
 
+/// the "global" name space.
 pub static GLOBAL_ID: ID = option_unwrap!(ID::_from_bytes(b"__GLOBAL"));
+
+/// the "executor" name space.
 pub(crate) static EXECUTOR_ID: ID = option_unwrap!(ID::_from_bytes(b"EXECUTOR"));
+
+/// the "task" name space.
 pub(crate) static TASK_ID: ID = option_unwrap!(ID::_from_bytes(b"TASK ID."));
 
+/// shortcut for `GLOBAL_ID.generate()`
 #[inline(always)]
 pub fn gen_global_id() -> Option<u128> {
     GLOBAL_ID.generate()
 }
 
+/// shortcut for `EXECUTOR_ID.generate()`
 #[inline(always)]
 pub(crate) fn gen_executor_id() -> Option<u128> {
     EXECUTOR_ID.generate()
 }
 
+/// shortcut for `TASK_ID.generate()`
 #[inline(always)]
 pub(crate) fn gen_task_id() -> Option<u128> {
     TASK_ID.generate()
