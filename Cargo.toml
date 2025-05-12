@@ -24,11 +24,11 @@ nightly = []
 [dependencies]
 async-task = "4.7.1"
 
-crossbeam-channel = { optional = true, version = "0.5.14" }
+crossbeam-channel = { optional = true, version = "0.5.15" }
 flume = { optional = true, version = "0.11.1", default-features = false }
 
-ahash = "0.8.11"
-scc2 = "2.4.2"
+ahash = "0.8.12"
+scc2 = "2.4.3"
 
 num-traits = "0.2.19"
 log = { version = "0.4.27", features = ["std"] }
@@ -40,14 +40,14 @@ event-listener = { version = "5.4.0", optional = true, features = ["portable-ato
 
 [dev-dependencies]
 smol = "2.0.2"
-env_logger = "0.11.1"
-once_cell = "1.19.0"
+env_logger = "0.11.8"
+once_cell = "1.21.3"
 moka = { version = "0.12.10", features = ["future"] }
 smolscale = "0.4.15"
 smolscale2 = "0.6.0"
 async-global-executor = "3.1.0"
 async-std = "1.13.1"
-tokio = { version = "1.44.2", features = ["full", "rt"] }
+tokio = { version = "1.45.0", features = ["full", "rt"] }
 fastrand = "2.3.0"
 smoltimeout = "0.6.2"
 criterion = "0.5.1"
