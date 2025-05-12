@@ -999,15 +999,15 @@ fn monitor_loop() {
 
         if let Some(jh) = MONITOR_THREAD_JH.get() {
             if jh.is_finished() {
-                start_monitor();
+                start_monitor().unwrap();
                 return;
             }
             if jh.thread().id() != current_thread_id {
-                start_monitor();
+                start_monitor().unwrap();
                 return;
             }
         } else {
-            start_monitor();
+            start_monitor().unwrap();
             return;
         }
 
@@ -1124,9 +1124,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    if ! is_monitor_running() {
-        let _ = start_monitor();
-    }
+    let _ = start_monitor();
 
     /// the wrapped future for profile.
     struct WrappedFuture<T, F: Future<Output=T>> {
