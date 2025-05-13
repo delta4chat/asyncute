@@ -121,3 +121,20 @@ fn test_execute_cost() {
 
     dbg!(Duration::from_secs_f64(costs.iter().map(Duration::as_secs_f64).sum::<f64>() / (costs.len() as f64)));
 }
+
+fn test_linked_storage() {
+    let s = Storage::<u128, 4>::new();
+    assert!(dbg!(s.push(1)).is_ok());
+    assert!(dbg!(s.push(2)).is_ok());
+    assert!(dbg!(s.push(3)).is_ok());
+    assert!(dbg!(s.push(4)).is_ok());
+    assert!(dbg!(s.push(5)).is_err());
+
+    let ls = LinkedStorage::from(s);
+    for i in 5..100 {
+        assert!(ls.push(i).is_ok());
+    }
+
+    while let Some(_) = dbg!(ls.pop()) {
+    }
+}

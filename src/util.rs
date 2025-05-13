@@ -466,7 +466,7 @@ pub mod injector {
                         msg = m;
 
                         // listener macro create listener on stack.
-                        // avoid recv_event.listener() due to it alloc heap.
+                        // avoid recv_event.listen() due to it alloc heap.
                         listener!(self.recv_event => recv_event_listener);
 
                         // waiting until recv event happen.
@@ -501,7 +501,7 @@ pub mod injector {
                         msg = m;
 
                         // listener macro create listener on stack.
-                        // avoid recv_event.listener() due to it alloc heap.
+                        // avoid recv_event.listen() due to it alloc heap.
                         listener!(self.recv_event => recv_event_listener);
 
                         // waiting until recv event happen.
@@ -548,7 +548,7 @@ pub mod injector {
                     },
                     Steal::Empty => {
                         // listener macro create listener on stack.
-                        // avoid send_event.listener() due to it alloc heap.
+                        // avoid send_event.listen() due to it alloc heap.
                         listener!(self.send_event => send_event_listener);
 
                         // waiting until send event happen.
@@ -585,7 +585,7 @@ pub mod injector {
                     },
                     Steal::Empty => {
                         // listener macro create listener on stack.
-                        // avoid send_event.listener() due to it alloc heap.
+                        // avoid send_event.listen() due to it alloc heap.
                         listener!(self.send_event => send_event_listener);
 
                         // waiting until send event happen.
@@ -701,6 +701,7 @@ pub mod injector {
 }
 
 /// the "unordered set" similar to scc::Bag but without the limit of maximum capacity.
+#[derive(Debug)]
 pub struct Storage<T, const N: usize> {
     array: [AtomicOwned<T>; N],
     len: AtomicUsize,
@@ -709,10 +710,19 @@ pub struct Storage<T, const N: usize> {
     last_nothing: AtomicUsize,
     last_something: AtomicUsize,
 }
+
+impl<T: 'static, const N: usize> Default for Storage<T, N> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: 'static, const N: usize> Storage<T, N> {
     /// create new empty [`Storage`].
     ///
     /// panic if N == 0.
+    #[inline(always)]
     pub const fn new() -> Self {
         assert!(N > 0);
 
@@ -727,16 +737,19 @@ impl<T: 'static, const N: usize> Storage<T, N> {
     }
 
     /// the current length of items in Storage.
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.len.load(Relaxed)
     }
 
     /// push Owned-wrapped item to Storage.
+    #[inline(always)]
     pub fn push(&self, item: T) -> Result<(), scc2::ebr::Owned<T>> {
         self.push_owned(scc2::ebr::Owned::new(item))
     }
 
     /// push item to Storage.
+    #[inline(always)]
     pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) -> Result<(), scc2::ebr::Owned<T>> {
         use scc2::ebr::{Ptr, Tag};
 
@@ -796,6 +809,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
     }
 
     /// pop item from Storage.
+    #[inline(always)]
     pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
         let len = self.len();
         if len == 0 {
@@ -841,8 +855,24 @@ pub struct LinkedStorage<T, const N: usize> {
     next: AtomicOwned<Self>,
 }
 
+impl<T: 'static, const N: usize> Default for LinkedStorage<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: 'static, const N: usize> From<Storage<T, N>> for LinkedStorage<T, N> {
+    fn from(inner: Storage<T, N>) -> LinkedStorage<T, N> {
+        Self {
+            inner,
+            next: AtomicOwned::null(),
+        }
+    }
+}
+
 impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     /// create new [`LinkedStorage`].
+    #[inline(always)]
     pub const fn new() -> Self {
         Self {
             inner: Storage::new(),
@@ -850,11 +880,13 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
         }
     }
 
+    #[inline(always)]
     fn try_next<'g>(&self, guard: &'g scc2::ebr::Guard) -> Option<&'g Self> {
         self.next.load(Relaxed, guard).as_ref()
     }
 
     /// get the next instance.
+    #[inline(always)]
     fn next<'g>(&self, guard: &'g scc2::ebr::Guard) -> &'g Self {
         let mut ptr = self.next.load(Relaxed, guard);
         let mut maybe_next;
@@ -895,11 +927,13 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     }
 
     /// try push `T` to this instance. if full, push to the next instance.
+    #[inline(always)]
     pub fn push(&self, item: T) {
         self.push_owned(scc2::ebr::Owned::new(item))
     }
 
     /// try push `Owned<T>` to this instance. if full, push to the next instance.
+    #[inline(always)]
     pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) {
         let g = scc2::ebr::Guard::new();
         let mut this = self;
@@ -910,6 +944,7 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     }
 
     /// try pop `Owned<T>` from this instance. if empty, try looking for the next instance if any.
+    #[inline(always)]
     pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
         let g = scc2::ebr::Guard::new();
         let mut this = self;
