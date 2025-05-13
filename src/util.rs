@@ -703,8 +703,11 @@ pub mod injector {
 /// the "unordered set" similar to scc::Bag but without the limit of maximum capacity.
 pub struct Storage<T, const N: usize> {
     array: [AtomicOwned<T>; N],
-    has: [AtomicBool; N],
     len: AtomicUsize,
+
+    has: [AtomicBool; N],
+    last_nothing: AtomicUsize,
+    last_something: AtomicUsize,
 }
 impl<T: 'static, const N: usize> Storage<T, N> {
     /// create new empty [`Storage`].
@@ -715,8 +718,11 @@ impl<T: 'static, const N: usize> Storage<T, N> {
 
         Self {
             array: [const { AtomicOwned::null() }; N],
-            has: [const { AtomicBool::new(false) }; N],
             len: AtomicUsize::new(0),
+
+            has: [const { AtomicBool::new(false) }; N],
+            last_nothing: AtomicUsize::new(0),
+            last_something: AtomicUsize::new(0),
         }
     }
 
@@ -725,17 +731,34 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         self.len.load(Relaxed)
     }
 
+    /// push Owned-wrapped item to Storage.
+    pub fn push(&self, item: T) -> Result<(), scc2::ebr::Owned<T>> {
+        self.push_owned(scc2::ebr::Owned::new(item))
+    }
+
     /// push item to Storage.
-    pub fn push(&self, item: T) -> bool {
-        use scc2::ebr::{Ptr, Owned, Tag};
+    pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) -> Result<(), scc2::ebr::Owned<T>> {
+        use scc2::ebr::{Ptr, Tag};
 
         if self.len() >= N {
-            return false;
+            return Err(owned);
         }
 
-        let mut owned = Owned::new(item);
         let g = scc2::ebr::Guard::new();
+
+        let mut idx = [0usize; N];
+        idx[0] = self.last_nothing.load(Relaxed);
+
+        let mut ii = 1;
         for i in 0..N {
+            if idx[0] == i {
+                continue;
+            }
+            idx[ii] = i;
+            ii += 1;
+        }
+
+        for i in idx.into_iter() {
             if self.has[i].load(Relaxed) {
                 continue;
             }
@@ -751,19 +774,25 @@ impl<T: 'static, const N: usize> Storage<T, N> {
             {
                 Ok((prev, _new)) => {
                     assert!(prev.is_none());
+
                     self.has[i].store(true, Relaxed);
+                    self.last_something.store(i, Relaxed);
+
                     self.len.checked_add(1);
-                    return true;
+                    return Ok(());
                 },
                 Err((o, cur)) => {
                     owned = o.unwrap();
+
                     assert!(! cur.is_null());
                     self.has[i].store(true, Relaxed);
+
+                    self.last_something.store(i, Relaxed);
                 }
             }
         }
 
-        false
+        Err(owned)
     }
 
     /// pop item from Storage.
@@ -773,8 +802,20 @@ impl<T: 'static, const N: usize> Storage<T, N> {
             return None;
         }
 
-        let mut maybe_owned;
+        let mut idx = [0usize; N];
+        idx[0] = self.last_something.load(Relaxed);
+
+        let mut ii = 1;
         for i in 0..N {
+            if idx[0] == i {
+                continue;
+            }
+            idx[ii] = i;
+            ii += 1;
+        }
+
+        let mut maybe_owned;
+        for i in idx.into_iter() {
             if self.has[i].load(Relaxed) {
                 maybe_owned = self.array[i].swap(
                     (None, scc2::ebr::Tag::None),
@@ -782,6 +823,8 @@ impl<T: 'static, const N: usize> Storage<T, N> {
                 ).0;
 
                 self.has[i].store(false, Relaxed);
+                self.last_nothing.store(i, Relaxed);
+
                 if let Some(owned) = maybe_owned {
                     self.len.checked_sub(1);
                     return Some(owned);
@@ -789,6 +832,100 @@ impl<T: 'static, const N: usize> Storage<T, N> {
             }
         }
         None
+    }
+}
+
+/// the multi [`Storage`]s backed by linked list.
+pub struct LinkedStorage<T, const N: usize> {
+    inner: Storage<T, N>,
+    next: AtomicOwned<Self>,
+}
+
+impl<T: 'static, const N: usize> LinkedStorage<T, N> {
+    /// create new [`LinkedStorage`].
+    pub const fn new() -> Self {
+        Self {
+            inner: Storage::new(),
+            next: AtomicOwned::null(),
+        }
+    }
+
+    fn try_next<'g>(&self, guard: &'g scc2::ebr::Guard) -> Option<&'g Self> {
+        self.next.load(Relaxed, guard).as_ref()
+    }
+
+    /// get the next instance.
+    fn next<'g>(&self, guard: &'g scc2::ebr::Guard) -> &'g Self {
+        let mut ptr = self.next.load(Relaxed, guard);
+        let mut maybe_next;
+        let mut new = None;
+        loop {
+            maybe_next = ptr.as_ref();
+
+            if maybe_next.is_some() {
+                return maybe_next.unwrap();
+            }
+            assert!(ptr.is_null());
+
+            if new.is_none() {
+                new = Some(scc2::ebr::Owned::new(Self::new()));
+            }
+
+            match
+                self.next.compare_exchange(
+                    ptr,
+                    (new, scc2::ebr::Tag::None),
+                    Relaxed,
+                    Relaxed,
+                    guard,
+                )
+            {
+                Ok((prev, new)) => {
+                    assert!(prev.is_none());
+                    maybe_next = new.as_ref();
+                    assert!(maybe_next.is_some());
+                    return maybe_next.unwrap();
+                },
+                Err((n, cur)) => {
+                    new = n;
+                    ptr = cur;
+                }
+            }
+        }
+    }
+
+    /// try push `T` to this instance. if full, push to the next instance.
+    pub fn push(&self, item: T) {
+        self.push_owned(scc2::ebr::Owned::new(item))
+    }
+
+    /// try push `Owned<T>` to this instance. if full, push to the next instance.
+    pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) {
+        let g = scc2::ebr::Guard::new();
+        let mut this = self;
+        while let Err(o) = this.inner.push_owned(owned) {
+            owned = o;
+            this = this.next(&g);
+        }
+    }
+
+    /// try pop `Owned<T>` from this instance. if empty, try looking for the next instance if any.
+    pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
+        let g = scc2::ebr::Guard::new();
+        let mut this = self;
+        let mut maybe;
+        loop {
+            maybe = this.inner.pop();
+            if maybe.is_some() {
+                return maybe;
+            }
+
+            if let Some(next) = this.try_next(&g) {
+                this = next;
+            } else {
+                return None;
+            }
+        }
     }
 }
 
