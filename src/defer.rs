@@ -27,7 +27,7 @@ impl<F: FnMut()> Defer<F> {
 
     /// calls the defer function early. and it will not be run if dropped later.
     ///
-    /// do nothing if it has been canceled or already called the function.
+    /// do nothing if it has been canceled or already called the defer function.
     #[inline(always)]
     pub fn run(&mut self) -> bool {
         if let Some(mut f) = self.f.take() {

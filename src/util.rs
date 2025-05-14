@@ -718,6 +718,46 @@ impl<T: 'static, const N: usize> Default for Storage<T, N> {
     }
 }
 
+impl<T: 'static, const N: usize> From<[AtomicOwned<T>; N]> for Storage<T, N> {
+    fn from(array: [AtomicOwned<T>; N]) -> Storage<T, N> {
+
+        let mut len = 0;
+        let mut has = [false; N];
+        let mut last_nothing = 0;
+        let mut last_something = 0;
+
+        let g = scc2::ebr::Guard::new();
+        for i in 0..N {
+            if array[i].load(Relaxed, &g).as_ref().is_some() {
+                len += 1;
+                has[i] = true;
+                last_something = i;
+            } else {
+                last_nothing = i;
+            }
+        }
+
+        let len = AtomicUsize::new(len);
+        let has = has.map(AtomicBool::new);
+        let last_nothing = AtomicUsize::new(last_nothing);
+        let last_something = AtomicUsize::new(last_something);
+
+        Self {
+            array,
+            len,
+            has,
+            last_nothing,
+            last_something,
+        }
+    }
+}
+
+impl<T: 'static, const N: usize> From<[T; N]> for Storage<T, N> {
+    fn from(val: [T; N]) -> Storage<T, N> {
+        val.map(AtomicOwned::new).into()
+    }
+}
+
 impl<T: 'static, const N: usize> Storage<T, N> {
     /// create new empty [`Storage`].
     ///

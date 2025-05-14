@@ -122,6 +122,7 @@ fn test_execute_cost() {
     dbg!(Duration::from_secs_f64(costs.iter().map(Duration::as_secs_f64).sum::<f64>() / (costs.len() as f64)));
 }
 
+#[test]
 fn test_linked_storage() {
     let s = Storage::<u128, 4>::new();
     assert!(dbg!(s.push(1)).is_ok());
@@ -131,10 +132,19 @@ fn test_linked_storage() {
     assert!(dbg!(s.push(5)).is_err());
 
     let ls = LinkedStorage::from(s);
-    for i in 5..100 {
-        assert!(ls.push(i).is_ok());
+    for i in 5..=103 {
+        ls.push(i);
     }
 
-    while let Some(_) = dbg!(ls.pop()) {
+    let g = scc2::ebr::Guard::new();
+    let mut v = Vec::new();
+    for _ in 1..=103u8 {
+        assert!(dbg!(ls.pop().map(|x| { let x = x.get_guarded_ref(&g); v.push(*x); x })).is_some());
+    }
+    assert!(dbg!(ls.pop()).is_none());
+
+    assert_eq!(v.len(), 103);
+    for i in 1..=103 {
+        assert!(v.contains(&i));
     }
 }
