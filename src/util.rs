@@ -214,13 +214,22 @@ macro_rules! atomic_checked_impl {
                         }
                     }
 
-                    let mut old;
+                    let mut old = self.load(Relaxed);
                     let mut new;
                     loop {
-                        old = self.load(Relaxed);
                         new = old.$op(val)?;
-                        if self.compare_exchange(old, new, Relaxed, Relaxed).is_ok() {
-                            return Some(old);
+                        match
+                            self.compare_exchange(
+                                old,     new,
+                                Relaxed, Relaxed,
+                            )
+                        {
+                            Ok(prev) => {
+                                return Some(prev);
+                            },
+                            Err(cur) => {
+                                old = cur;
+                            }
                         }
                     }
                 }
@@ -782,13 +791,13 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         self.len.load(Relaxed)
     }
 
-    /// push Owned-wrapped item to Storage.
+    /// push item to Storage.
     #[inline(always)]
     pub fn push(&self, item: T) -> Result<(), scc2::ebr::Owned<T>> {
         self.push_owned(scc2::ebr::Owned::new(item))
     }
 
-    /// push item to Storage.
+    /// push Owned-wrapped item to Storage.
     #[inline(always)]
     pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) -> Result<(), scc2::ebr::Owned<T>> {
         use scc2::ebr::{Ptr, Tag};
