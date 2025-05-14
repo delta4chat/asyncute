@@ -191,9 +191,11 @@ impl Executor {
         });
 
         let exitable = self.state.exitable;
-        let interval = MonitorConfig::global().interval();
-        let max_idle = interval * 2;
 
+        let execonfig = ExecutorConfig::global();
+        let mut interval = execonfig.interval.get();
+
+        let max_idle = interval * 2;
         let mut worked;
         let mut t = Instant::now();
 
@@ -288,6 +290,10 @@ impl Executor {
                 log::trace!("{} not worked", self.state.id);
             }
 
+            if execonfig.interval.changed() {
+                interval = execonfig.interval.get();
+            }
+
             #[cfg(feature="crossbeam-deque")]
             match rx.recv_timeout(interval) {
                 Some(runinfo) => {
@@ -347,7 +353,7 @@ impl Executor {
                 if t.elapsed() > max_idle {
                     break;
                 }
-                if self.state.working_ratio() < 0.1 {
+                if self.state.working_ratio() < execonfig.standby_threshold() {
                     break;
                 }
                 if self.state.please_exit.load(Relaxed) {

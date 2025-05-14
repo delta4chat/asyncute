@@ -635,6 +635,9 @@ impl ExecutorSpawnPolicy {
 /// Configuration of Executor.
 #[derive(Debug)]
 pub struct ExecutorConfig {
+    /// interval of executor's recv_timeout.
+    interval: AtomicDuration,
+
     /// `minimum..=maximum` number of total executor threads.
     pub total_threads_range: AtomicRangeStrict<AtomicUsize>,
 
@@ -659,36 +662,62 @@ pub struct ExecutorConfig {
 
     /// if a executor's working ratio >= this threshold, it will be assumed as "overload" (busy).
     overload_threshold: AtomicF64,
+
+    /// if a executor is temporary (exitable), and it's working ratio <= this threshold, it will be exited automatically.
+    standby_threshold: AtomicF64,
 }
 
 impl ExecutorConfig {
+    /// the minimum interval of executor loop.
+    pub const MIN_INTERVAL: Duration = Duration::from_millis(100);
+
+    /// the maximum interval of executor loop.
+    pub const MAX_INTERVAL: Duration = Duration::new(5, 0);
+
     /// get the global instance of ExecutorConfig.
     #[inline(always)]
     pub const fn global() -> &'static Self {
         static GLOBAL: ExecutorConfig =
             ExecutorConfig {
+                interval: AtomicDuration::new_with_trace(1, 0),
                 total_threads_range: AtomicRangeStrict::<AtomicUsize>::new(1, usize::MAX),
                 temporary_threads_range: AtomicRangeStrict::<AtomicUsize>::new(0, usize::MAX),
                 spawn_policy: ExecutorSpawnPolicy::OnDemand.to_atomic(),
                 overload_threshold: AtomicF64::new(0.85),
+                standby_threshold: AtomicF64::new(0.5),
             };
 
         &GLOBAL
     }
 
-    /// getter of spawn_policy
+    /// get the executor interval.
+    pub fn interval(&self) -> Duration {
+        self.interval.get()
+    }
+
+    /// set the executor interval.
+    pub fn set_interval(&self, val: Duration) -> bool {
+        if val < Self::MIN_INTERVAL || val > Self::MAX_INTERVAL {
+            return false;
+        }
+
+        self.interval.set(val);
+        true
+    }
+
+    /// get the executor spawn policy.
     #[inline(always)]
     pub fn spawn_policy(&self) -> ExecutorSpawnPolicy {
         ExecutorSpawnPolicy::from_atomic(&self.spawn_policy).expect("unexpected unknown variant of ExecutorSpawnPolicy")
     }
 
-    /// setter of spawn_policy
+    /// set the executor spawn policy.
     #[inline(always)]
     pub fn set_spawn_policy(&self, policy: ExecutorSpawnPolicy) {
         self.spawn_policy.store(policy.value(), Relaxed);
     }
 
-    /// getter of overload_threshold
+    /// get the threshold of overload.
     #[inline(always)]
     pub fn overload_threshold(&self) -> f64 {
         let val = self.overload_threshold.load(Relaxed);
@@ -696,9 +725,34 @@ impl ExecutorConfig {
         val
     }
 
-    /// setter of overload_threshold
+    /// set the threshold of overload.
     #[inline(always)]
     pub fn set_overload_threshold(&self, val: f64) -> bool {
+        // check special values
+        if val.is_nan() || val.is_infinite() || val.is_subnormal() {
+            return false;
+        }
+
+        // check range
+        if val < 0.0 || val > 1.0 {
+            return false;
+        }
+
+        self.overload_threshold.store(val, Relaxed);
+        true
+    }
+
+    /// get the threshold of standby.
+    #[inline(always)]
+    pub fn standby_threshold(&self) -> f64 {
+        let val = self.standby_threshold.load(Relaxed);
+        assert!(val >= 0.0 && val <= 1.0);
+        val
+    }
+
+    /// set the threshold of standby.
+    #[inline(always)]
+    pub fn set_standby_threshold(&self, val: f64) -> bool {
         // check special values
         if val.is_nan() || val.is_infinite() || val.is_subnormal() {
             return false;
