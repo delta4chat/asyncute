@@ -16,7 +16,8 @@ flume = ["dep:flume"]
 crossbeam-channel = ["dep:crossbeam-channel"]
 kanal = ["dep:kanal"]
 
-crossbeam-deque = ["dep:crossbeam-deque", "dep:event-listener"]
+crossbeam-deque = ["dep:crossbeam-deque", "event-listener"]
+event-listener = ["dep:event-listener"]
 
 std-mpmc = ["nightly"]
 nightly = []

@@ -331,59 +331,139 @@ pub const fn slice_to_array<T: Copy, const N: usize>(slice: &[T], start: usize) 
     Some(out)
 }
 
+/// the Ordering of List push/pop
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ListOrdering {
+    /// First in, first out.
+    FIFO = b'f',
+
+    /// Last in, first out.
+    LIFO = b'l',
+
+    /// Unordered (or ordering unspecified): ordering is not guaranteed.
+    Unordered = b'?',
+}
+
+/// Concurrent List.
+pub trait List<T> {
+    /// create new empty list.
+    fn new() -> Self;
+
+    /// get the ordering of list.
+    fn ordering() -> ListOrdering;
+
+    /// get the current length of stored items.
+    fn len(&self) -> usize;
+
+    /// push provided item to the set of items.
+    /// * the item must not be discarded. if there is no space, the Err(item) should be returned back.
+    /// * if this operation is successfully, it must ensures the pushed item will be appears in pop operations.
+    /// * this operation must not blocking.
+    fn push(&self, val: T) -> Result<(), T>;
+
+    /// try to pop item from the set of items.
+    /// * return None if empty.
+    /// * this operation must not blocking.
+    fn pop(&self) -> Option<T>;
+}
+
 #[cfg(feature="crossbeam-deque")]
-/// helper of [`crossbeam_deque::Injector`] to support blocking wait (powered by [`event_listener::Event`])
+/// crossbeam_deque::Injector version of "event channel"
 pub mod injector {
+    use super::{ListOrdering, event_channel};
+    use crossbeam_deque::Injector;
+
+    /// alias of `event_channel::Channel<T, Injector<T>>`
+    pub type InjectorChannel<T> = event_channel::Channel<T, Injector<T>>;
+
+    /// alias of `event_channel::Sender<T, Injector<T>>`
+    pub type Sender<T> = event_channel::Sender<T, Injector<T>>;
+
+    /// alias of `event_channel::Receiver<T, Injector<T>>`
+    pub type Receiver<T> = event_channel::Receiver<T, Injector<T>>;
+
+    impl<T> super::List<T> for Injector<T> {
+        fn new() -> Self {
+            Injector::new()
+        }
+
+        fn ordering() -> ListOrdering {
+            ListOrdering::FIFO
+        }
+
+        fn len(&self) -> usize {
+            Injector::len(self)
+        }
+
+        fn push(&self, val: T) -> Result<(), T> {
+            Injector::push(self, val);
+            Ok(())
+        }
+
+        fn pop(&self) -> Option<T> {
+            let mut ret = Injector::steal(self);
+            while ret.is_retry() {
+                ret = Injector::steal(self);
+            }
+            ret.success()
+        }
+    }
+}
+
+/// helper for support blocking wait of [`List`] (powered by [`event_listener::Event`])
+#[cfg(feature="event-listener")]
+pub mod event_channel {
     use super::*;
 
-    use crossbeam_deque::{Injector, Steal};
     use event_listener::{Event, Listener, listener};
 
     /// the private Inner of InjectorChannel
-    pub struct Inner<T> {
+    pub struct Inner<T, L: List<T>> {
         bounded: Option<usize>,
-        injector: Injector<T>,
+        list: L,
         send_event: Event,
         recv_event: Event,
+        _pd: PhantomData<T>,
     }
 
-    impl<T> fmt::Debug for Inner<T> {
+    impl<T, L: List<T>> fmt::Debug for Inner<T, L> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("Inner")
              .field("bounded", &self.bounded)
-             .field("injector", &self.injector)
+             .field("list", &format!("dyn List[T; {}]", self.list.len()))
              .field("send_event", &self.send_event)
              .field("recv_event", &self.recv_event)
              .finish()
         }
     }
 
-    /// the "channel" backed by `Injector`.
-    pub struct InjectorChannel<T>(Arc<Inner<T>>);
+    /// the "channel" backed by `List`.
+    pub struct Channel<T, L: List<T>>(Arc<Inner<T, L>>);
 
-    impl<T> fmt::Debug for InjectorChannel<T> {
+    impl<T, L: List<T>> fmt::Debug for Channel<T, L> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_tuple("InjectorChannel")
+            f.debug_tuple("Channel")
              .field(&self.0)
              .finish()
         }
     }
 
-    impl<T> Clone for InjectorChannel<T> {
+    impl<T, L: List<T>> Clone for Channel<T, L> {
         fn clone(&self) -> Self {
             Self(self.0.clone())
         }
     }
 
-    impl<T> Deref for InjectorChannel<T> {
-        type Target = Inner<T>;
+    impl<T, L: List<T>> Deref for Channel<T, L> {
+        type Target = Inner<T, L>;
 
-        fn deref(&self) -> &Inner<T> {
+        fn deref(&self) -> &Inner<T, L> {
             &self.0
         }
     }
 
-    impl<T> InjectorChannel<T> {
+    impl<T, L: List<T>> Channel<T, L> {
         /// create new InjectorChanel without the limit of maximum capacity.
         #[inline(always)]
         pub fn unbounded() -> Self {
@@ -392,7 +472,7 @@ pub mod injector {
 
         /// create new paired (Sender, Receiver) of InjectorChannel without the limit of maximum capacity.
         #[inline(always)]
-        pub fn unbounded_split() -> (Sender<T>, Receiver<T>) {
+        pub fn unbounded_split() -> (Sender<T, L>, Receiver<T, L>) {
             Self::unbounded().split()
         }
 
@@ -404,7 +484,7 @@ pub mod injector {
 
         /// create new paired (Sender, Receiver) of InjectorChannel and limits the maximum capacity.
         #[inline(always)]
-        pub fn bounded_split(size: usize) -> (Sender<T>, Receiver<T>) {
+        pub fn bounded_split(size: usize) -> (Sender<T, L>, Receiver<T, L>) {
             Self::bounded(size).split()
         }
 
@@ -417,21 +497,22 @@ pub mod injector {
 
             Self(Arc::new(Inner {
                 bounded,
-                injector: Injector::new(),
+                list: L::new(),
                 send_event: Event::new(),
                 recv_event: Event::new(),
+                _pd: PhantomData,
             }))
         }
 
         /// create new paired (Sender, Receiver) of InjectorChannel.
         #[inline(always)]
-        pub fn new_split(bounded: Option<usize>) -> (Sender<T>, Receiver<T>) {
+        pub fn new_split(bounded: Option<usize>) -> (Sender<T, L>, Receiver<T, L>) {
             Self::new(bounded).split()
         }
 
         /// split the InjectorChannel to (Sender, Receiver) pair.
         #[inline(always)]
-        pub fn split(&self) -> (Sender<T>, Receiver<T>) {
+        pub fn split(&self) -> (Sender<T, L>, Receiver<T, L>) {
             let sender = Sender(self.clone());
             let receiver = Receiver(self.clone());
             (sender, receiver)
@@ -440,7 +521,7 @@ pub mod injector {
         /// Returns the number of messages in the channel.
         #[inline(always)]
         pub fn len(&self) -> usize {
-            self.injector.len()
+            self.list.len()
         }
 
         /// try to send new message to channel.
@@ -456,13 +537,14 @@ pub mod injector {
                 }
             }
 
-            self.injector.push(msg);
+            self.list.push(msg)?;
             Ok(self.send_event.notify_relaxed(len.checked_add(1).unwrap_or(len)))
         }
 
         /// the blocking version of `try_send`.
         /// * if channel is full, this method will blocking until have space.
         /// * return the number of notified receivers.
+        ///
         /// NOTE: this method is without timeout or deadline, it will be blocking forever if no space available.
         #[inline(always)]
         pub fn send(&self, mut msg: T) -> usize {
@@ -527,35 +609,26 @@ pub mod injector {
         /// * return None if this channel is empty.
         #[inline(always)]
         pub fn try_recv(&self) -> Option<T> {
-            loop {
-                match self.injector.steal() {
-                    Steal::Success(msg) => {
-                        self.recv_event.notify_relaxed(1);
-                        return Some(msg);
-                    },
-                    Steal::Empty => {
-                        return None;
-                    },
-                    Steal::Retry => {
-                        // operation needs retry.
-                    }
-                }
+            let maybe = self.list.pop();
+            if maybe.is_some() {
+                self.recv_event.notify_relaxed(1);
             }
+            maybe
         }
 
         /// the blocking version of `try_recv`.
         /// * if there is no messages in channel, this method will blocking until have one.
         /// * return the received message.
+        ///
         /// NOTE: this method is without timeout or deadline, it will be blocking forever if no messages available.
         #[inline(always)]
         pub fn recv(&self) -> T {
             loop {
-                match self.injector.steal() {
-                    Steal::Success(msg) => {
-                        self.recv_event.notify_relaxed(1);
+                match self.try_recv() {
+                    Some(msg) => {
                         return msg;
                     },
-                    Steal::Empty => {
+                    _ => {
                         // listener macro create listener on stack.
                         // avoid send_event.listen() due to it alloc heap.
                         listener!(self.send_event => send_event_listener);
@@ -563,9 +636,6 @@ pub mod injector {
                         // waiting until send event happen.
                         send_event_listener.wait();
                     },
-                    Steal::Retry => {
-                        // operation needs retry.
-                    }
                 }
             }
         }
@@ -587,21 +657,17 @@ pub mod injector {
         #[inline(always)]
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
             while Instant::now() < deadline {
-                match self.injector.steal() {
-                    Steal::Success(msg) => {
-                        self.recv_event.notify_relaxed(1);
+                match self.list.pop() {
+                    Some(msg) => {
                         return Some(msg);
                     },
-                    Steal::Empty => {
+                    _ => {
                         // listener macro create listener on stack.
                         // avoid send_event.listen() due to it alloc heap.
                         listener!(self.send_event => send_event_listener);
 
                         // waiting until send event happen.
                         send_event_listener.wait_deadline(deadline);
-                    },
-                    Steal::Retry => {
-                        // operation needs retry.
                     }
                 }
             }
@@ -610,10 +676,10 @@ pub mod injector {
         }
     }
 
-    /// the send side of InjectorChannel.
-    pub struct Sender<T>(InjectorChannel<T>);
+    /// the send side of Channel.
+    pub struct Sender<T, L: List<T>>(Channel<T, L>);
 
-    impl<T> fmt::Debug for Sender<T> {
+    impl<T, L: List<T>> fmt::Debug for Sender<T, L> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_tuple("Sender")
              .field(&self.0)
@@ -621,48 +687,48 @@ pub mod injector {
         }
     }
 
-    impl<T> Clone for Sender<T> {
+    impl<T, L: List<T>> Clone for Sender<T, L> {
         fn clone(&self) -> Self {
             Self(self.0.clone())
         }
     }
 
-    impl<T> Sender<T> {
-        /// see [`InjectorChannel::len()`].
+    impl<T, L: List<T>> Sender<T, L> {
+        /// see [`Channel::len()`].
         #[inline(always)]
         pub fn len(&self) -> usize {
             self.0.len()
         }
 
-        /// see [`InjectorChannel::try_send()`].
+        /// see [`Channel::try_send()`].
         #[inline(always)]
         pub fn try_send(&self, msg: T) -> Result<usize, T> {
             self.0.try_send(msg)
         }
 
-        /// see [`InjectorChannel::send()`].
+        /// see [`Channel::send()`].
         #[inline(always)]
         pub fn send(&self, msg: T) -> usize {
             self.0.send(msg)
         }
 
-        /// see [`InjectorChannel::send_timeout()`].
+        /// see [`Channel::send_timeout()`].
         #[inline(always)]
         pub fn send_timeout(&self, msg: T, timeout: Duration) -> Result<usize, T> {
             self.0.send_timeout(msg, timeout)
         }
 
-        /// see [`InjectorChannel::send_deadline()`].
+        /// see [`Channel::send_deadline()`].
         #[inline(always)]
         pub fn send_deadline(&self, msg: T, deadline: Instant) -> Result<usize, T> {
             self.0.send_deadline(msg, deadline)
         }
     }
 
-    /// the receive side of InjectorChannel.
-    pub struct Receiver<T>(InjectorChannel<T>);
+    /// the receive side of Channel.
+    pub struct Receiver<T, L: List<T>>(Channel<T, L>);
 
-    impl<T> fmt::Debug for Receiver<T> {
+    impl<T, L: List<T>> fmt::Debug for Receiver<T, L> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_tuple("Receiver")
              .field(&self.0)
@@ -670,38 +736,38 @@ pub mod injector {
         }
     }
 
-    impl<T> Clone for Receiver<T> {
+    impl<T, L: List<T>> Clone for Receiver<T, L> {
         fn clone(&self) -> Self {
             Self(self.0.clone())
         }
     }
 
-    impl<T> Receiver<T> {
-        /// see [`InjectorChannel::len()`].
+    impl<T, L: List<T>> Receiver<T, L> {
+        /// see [`Channel::len()`].
         #[inline(always)]
         pub fn len(&self) -> usize {
             self.0.len()
         }
 
-        /// see [`InjectorChannel::try_recv()`].
+        /// see [`Channel::try_recv()`].
         #[inline(always)]
         pub fn try_recv(&self) -> Option<T> {
             self.0.try_recv()
         }
 
-        /// see [`InjectorChannel::recv()`].
+        /// see [`Channel::recv()`].
         #[inline(always)]
         pub fn recv(&self) -> T {
             self.0.recv()
         }
 
-        /// see [`InjectorChannel::recv_timeout()`].
+        /// see [`Channel::recv_timeout()`].
         #[inline(always)]
         pub fn recv_timeout(&self, timeout: Duration) -> Option<T> {
             self.0.recv_timeout(timeout)
         }
 
-        /// see [`InjectorChannel::recv_deadline()`].
+        /// see [`Channel::recv_deadline()`].
         #[inline(always)]
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
             self.0.recv_deadline(deadline)
