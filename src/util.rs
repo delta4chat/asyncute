@@ -1681,6 +1681,14 @@ impl AtomicInstant {
 pub struct AtomicIpv4Addr {
     bits: AtomicU32,
 }
+
+impl Default for AtomicIpv4Addr {
+    #[inline(always)]
+    fn default() -> Self {
+        const { Self::default() }
+    }
+}
+
 impl AtomicIpv4Addr {
     /// the default value (0.0.0.0) of AtomicIpv4Addr.
     #[inline(always)]
@@ -1725,11 +1733,19 @@ impl AtomicIpv4Addr {
     }
 }
 
-/// the atomic version of Ipv6Addr.
+/// the atomic version of [`Ipv6Addr`].
 #[derive(Debug)]
 pub struct AtomicIpv6Addr {
     bits: AtomicU128,
 }
+
+impl Default for AtomicIpv6Addr {
+    #[inline(always)]
+    fn default() -> Self {
+        const { Self::default() }
+    }
+}
+
 impl AtomicIpv6Addr {
     /// the default value (::) of AtomicIpv6Addr.
     #[inline(always)]
@@ -1774,11 +1790,18 @@ impl AtomicIpv6Addr {
     }
 }
 
-/// the atomic version of IpAddr.
+/// the atomic version of [`IpAddr`].
 #[derive(Debug)]
 pub struct AtomicIpAddr {
     kind: AtomicU8,
     data: AtomicU128,
+}
+
+impl Default for AtomicIpAddr {
+    #[inline(always)]
+    fn default() -> Self {
+        const { Self::default() }
+    }
 }
 
 impl AtomicIpAddr {
@@ -1903,6 +1926,12 @@ pub struct AtomicSocketAddr {
     ready: AtomicBool,
     ip: AtomicIpAddr,
     port: AtomicU16,
+}
+
+impl Default for AtomicSocketAddr {
+    fn default() -> Self {
+        const { Self::default() }
+    }
 }
 
 impl AtomicSocketAddr {

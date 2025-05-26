@@ -27,7 +27,14 @@ check_exclusive_features!(
 );
 
 fn main() {
-    #[cfg(feature="kanal")]
-    println!("cargo:warning=kanal v0.1.1 channels is buggy (recv_timeout busy waiting) currently! this only for test and should not use in release until it get fixed in published kanal crate");
+    println!("cargo:rustc-check-cfg=cfg(nightly)");
+
+    if rustversion::cfg!(nightly) {
+        println!("cargo:rustc-cfg=nightly");
+    }
+
+    if cfg!(feature="kanal") {
+        println!("cargo:warning=kanal v0.1.1 channels is buggy (recv_timeout busy waiting) currently! this only for test and should not use in release until it get fixed in published kanal crate");
+    }
 }
 

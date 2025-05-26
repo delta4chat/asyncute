@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#![cfg_attr(any(nightly, feature="nightly"), feature(doc_auto_cfg))]
+
 #![cfg_attr(not(test), warn(missing_docs))]
 
 #![cfg_attr(feature="std-mpmc", feature(mpmc_channel))]

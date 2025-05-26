@@ -1,19 +1,17 @@
 //! defer.rs
 
-use core::mem::ManuallyDrop;
-
 /// Defer function (or "drop guard") will be run on the end of scope (the Drop destructor).
 #[derive(Debug)]
-pub struct Defer<F: FnMut()> {
-    f: Option<ManuallyDrop<F>>,
+pub struct Defer<F: FnOnce()> {
+    f: Option<F>,
 }
 
-impl<F: FnMut()> Defer<F> {
+impl<F: FnOnce()> Defer<F> {
     /// create new Defer function.
     #[inline(always)]
     pub const fn new(f: F) -> Self {
         Self {
-            f: Some(ManuallyDrop::new(f)),
+            f: Some(f),
         }
     }
 
@@ -30,7 +28,7 @@ impl<F: FnMut()> Defer<F> {
     /// do nothing if it has been canceled or already called the defer function.
     #[inline(always)]
     pub fn run(&mut self) -> bool {
-        if let Some(mut f) = self.f.take() {
+        if let Some(f) = self.f.take() {
             f();
             true
         } else {
@@ -39,7 +37,7 @@ impl<F: FnMut()> Defer<F> {
     }
 }
 
-impl<F: FnMut()> Drop for Defer<F> {
+impl<F: FnOnce()> Drop for Defer<F> {
     #[inline(always)]
     fn drop(&mut self) {
         self.run();
