@@ -596,7 +596,7 @@ impl ExecutorSpawnPolicy {
                      };
                 if let Some(state) = EXECUTOR_INDEX.peek(&id, &g) {
                     assert!(state.exitable);
-                    log::info!("request {id} to exit (it exceeds the limit of temporary executors)");
+                    log::info!("request {} to exit (it exceeds the limit of temporary executors)", id.count());
                     state.exit().unwrap();
                 }
             }
@@ -610,7 +610,7 @@ impl ExecutorSpawnPolicy {
             if (*load) < overload_threshold {
                 all_overload = false;
             } else {
-                log::warn!("executor {id} is overloading: {load}");
+                log::warn!("executor {} is overloading: {load}", id.count());
             }
         }
 
@@ -996,10 +996,10 @@ pub fn spawn_executor(exitable: bool) {
 
         let parent = std::thread::current();
 
-        let idx = id as u64;
+        let idc = id.count();
 
         std::thread::Builder::new()
-            .name(format!("ac-exec-{idx}-{flag}"))
+            .name(format!("ac-exec-{idc}-{flag}"))
             .stack_size(1048576 * 20)
             .spawn(move || {
                 parent.unpark();
@@ -1073,7 +1073,7 @@ fn monitor_loop() {
             spawn_executor(false);
         }
 
-        log::info!("monitor status = {:?}", &status);
+        log::trace!("monitor status = {:?}", &status);
 
         config.executor.spawn_policy().spawn_temporary_executor(&status);
 

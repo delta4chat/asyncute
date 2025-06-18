@@ -119,7 +119,7 @@ impl Executor {
     /// run a runnable, catch unwind if it panic (if possible)
     #[inline(always)]
     fn run_one(&self, runinfo: RunInfo, bulk: bool) {
-        let id = self.state.id;
+        let idc = self.state.id.count();
 
         log::debug!("Runnable ScheduleInfo: {:?}", runinfo.info);
         
@@ -143,11 +143,11 @@ impl Executor {
                         }
                         $(
                             else if let Some(val) = ref_any.downcast_ref::<$t>() {
-                                log::error!(concat!("Executor {} Runnable panic! TypeId={:?} ", stringify!($t), " = {:?}"), id, type_id, val);
+                                log::error!(concat!("Executor {} Runnable panic! TypeId={:?} ", stringify!($t), " = {:?}"), idc, type_id, val);
                             }
                         )*
                         else {
-                            log::error!("Executor {id} Runnable panic! TypeId={type_id:?} dyn Any = {ref_any:?}");
+                            log::error!("Executor {idc} Runnable panic! TypeId={type_id:?} dyn Any = {ref_any:?}");
                         }
                     }
                 }
@@ -184,6 +184,9 @@ impl Executor {
     /// the execute loop of executor.
     #[inline(always)]
     pub fn run(self) -> std::io::Result<()> {
+        #[cfg(test)]
+        let idc = self.state.id.count();
+
         let rx = &self.runinfo_rx;
 
         let _defer = Defer::new(|| {
@@ -279,7 +282,7 @@ impl Executor {
 
             if worked {
                 #[cfg(test)]
-                log::trace!("{} worked", self.state.id);
+                log::trace!("{idc} worked");
 
                 self.state.working.store(false, Relaxed);
                 if exitable {
@@ -287,7 +290,7 @@ impl Executor {
                 }
             } else {
                 #[cfg(test)]
-                log::trace!("{} not worked", self.state.id);
+                log::trace!("{idc} not worked");
             }
 
             if execonfig.interval.changed() {

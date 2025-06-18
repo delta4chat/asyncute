@@ -9,6 +9,37 @@ use std::{
 
 use portable_atomic::AtomicU64;
 
+/// extension for u128 ID.
+pub trait Id {
+    /// Get Name Space (NS) of ID.
+    fn namespace(self) -> u64;
+
+    /// Get Count (sequence position) of ID.
+    fn count(self) -> u64;
+}
+
+impl Id for u128 {
+    // high 64-bit value
+    fn namespace(self) -> u64 {
+        (self >> 64) as u64
+    }
+
+    // low 64-bit value
+    fn count(self) -> u64 {
+        self as u64
+    }
+}
+
+impl Id for (u64, u64) {
+    fn namespace(self) -> u64 {
+        self.0
+    }
+
+    fn count(self) -> u64 {
+        self.1
+    }
+}
+
 /// the namespaced ID generator.
 pub struct ID {
     // the 64-bit prefix (name space) of u128 id.
