@@ -1130,8 +1130,8 @@ pub fn start_monitor() -> std::io::Result<()> {
         std::thread::Builder::new()
         .name(String::from("ac-monitor"))
         .spawn(monitor_loop)?;
-    let jh = Arc::new(jh);
-    MONITOR_THREAD_JH.set_arc(jh.clone());
+    let jh = scc2::ebr::Shared::new(jh);
+    MONITOR_THREAD_JH.set_shared(jh.clone());
     jh.thread().unpark();
 
     defer.run();

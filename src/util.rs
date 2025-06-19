@@ -13,7 +13,6 @@ use std::{
         SocketAddr,
     },
     time::{Instant, Duration},
-    sync::Arc,
 };
 
 use once_cell::sync::{Lazy, OnceCell};
@@ -2399,8 +2398,8 @@ impl StableClock {
                         se.1.add_nanos(tick_ns);
                         diff = this.time_diff();
                         if diff > tick && diff < max_diff {
-                            se = Arc::new((Instant::now(), AtomicDuration::new(0, 0)));
-                            this.started_elapsed.set_arc(se.clone());
+                            se = scc2::ebr::Shared::new((Instant::now(), AtomicDuration::new(0, 0)));
+                            this.started_elapsed.set_shared(se.clone());
                         }
                     }
                 }).expect("unable to spawn tick thread!")
