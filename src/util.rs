@@ -1305,6 +1305,17 @@ impl Default for AtomicDuration {
     }
 }
 
+impl From<Duration> for AtomicDuration {
+    fn from(val: Duration) -> Self {
+        Self::from_nanos(val.as_nanos())
+    }
+}
+impl From<AtomicDuration> for Duration {
+    fn from(val: AtomicDuration) -> Self {
+        val.get()
+    }
+}
+
 impl AtomicDuration {
     /// one second is equal to one billion nanoseconds.
     const NANOS_PER_SEC: u128 = 1_000_000_000;
@@ -1328,6 +1339,21 @@ impl AtomicDuration {
     #[inline(always)]
     pub const fn zero() -> Self {
         Self::new(0, 0)
+    }
+
+    /// create new AtomicDuration from u128 nanoseconds.
+    #[inline(always)]
+    pub const fn from_nanos(val: u128) -> Self {
+        Self {
+            total_ns: AtomicU128::new(val),
+            changed: None,
+        }
+    }
+
+    /// create new AtomicDuration from Duration.
+    #[inline(always)]
+    pub const fn from(val: Duration) -> Self {
+        Self::from_nanos(val.as_nanos())
     }
 
     /// create new AtomicDuration with seconds and (subsecond) nanos.
