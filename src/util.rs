@@ -658,7 +658,7 @@ pub mod event_channel {
         #[inline(always)]
         pub fn recv_deadline(&self, deadline: Instant) -> Option<T> {
             while Instant::now() < deadline {
-                match self.list.pop() {
+                match self.try_recv() {
                     Some(msg) => {
                         return Some(msg);
                     },
