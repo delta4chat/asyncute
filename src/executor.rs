@@ -3,7 +3,6 @@
 use crate::*;
 
 use std::{
-    sync::Arc,
     time::Instant,
 };
 
@@ -377,10 +376,10 @@ impl Drop for Executor {
         self.dropped = true;
 
         // remove this executor from global index.
-        EXECUTOR_INDEX.remove(&self.state.id);
+        EXECUTOR_INDEX.remove_sync(&self.state.id);
 
         // set working state to idle.
-        self.state.working.store(false, Relaxed);
+        self.state.working.store(false, Release);
 
     }
 }

@@ -31,7 +31,6 @@ use core::{
 };
 
 use std::{
-    sync::Arc,
     time::{Instant, Duration},
 };
 
@@ -58,8 +57,9 @@ use portable_atomic::{
     AtomicU64,
     AtomicUsize,
     AtomicF64,
-    Ordering::Relaxed
+    Ordering::*,
 };
+use portable_atomic_util::Arc;
 use once_cell::sync::Lazy;
 
 /// the inner of TaskInfo.
@@ -143,10 +143,10 @@ pub type ExecutorId = u128;
 pub type TaskId = u128;
 
 /// the global index of executor
-static EXECUTOR_INDEX: Lazy<scc2::HashIndex<ExecutorId, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
+static EXECUTOR_INDEX: Lazy<scc::HashIndex<ExecutorId, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
 
 /// the JoinHandle of monitor thread
-static MONITOR_THREAD_JH: scc2::Atom<std::thread::JoinHandle<()>> = scc2::Atom::init();
+static MONITOR_THREAD_JH: Atom<std::thread::JoinHandle<()>> = Atom::null();
 
 /// the Runnable + ScheduleInfo from async-task
 pub(crate) struct RunInfo {
@@ -220,7 +220,7 @@ pub struct RunnableProfile {
 
     /*
     /// used time for each Runnable.run()
-    run_took: scc2::Queue<Duration>,
+    run_took: scc::Queue<Duration>,
     */
 
     alive_count: AtomicU64,
@@ -415,10 +415,12 @@ pub struct ProfileConfig {
     /// whether enables profile recording?
     pub enabled: AtomicBool,
 
+    /// (TODO: unimplemented)
+    ///
     /// output UDP socket peer of recorded profiles.
     ///
     /// for interval 10 seconds, if "the port is zero" then prints to stderr, otherwise it will sends datagram to provided SocketAddr and not to print.
-    pub remote: AtomicSocketAddr,
+    pub remote: AtomicSocketAddr, 
 }
 impl ProfileConfig {
     /// get the global instance of ProfileConfig.
@@ -586,7 +588,7 @@ impl ExecutorSpawnPolicy {
         if len >= range.end {
             let mut ids = status.temporary.clone();
             let mut id;
-            let g = scc2::ebr::Guard::new();
+            let g = sdd::Guard::new();
             while ids.len() >= range.end {
                 id = match ids.pop() {
                          Some(v) => v,
@@ -931,7 +933,7 @@ impl ExecutorStatus {
 
         self.work_load.clear();
 
-        let g = scc2::ebr::Guard::new();
+        let g = scc::Guard::new();
         for (id, state) in EXECUTOR_INDEX.iter(&g) {
             if self.total.contains(id) {
                 continue;
@@ -965,7 +967,7 @@ impl ExecutorStatus {
         drop(g);
 
         for id in self.remove.iter() {
-            EXECUTOR_INDEX.remove(id);
+            EXECUTOR_INDEX.remove_sync(id);
         }
 
         self.last_update = Some(Instant::now());
@@ -1009,7 +1011,7 @@ pub fn spawn_executor(exitable: bool) {
     };
     state.join_handle.set(Arc::new(jh)).expect("unable to set join handle for ExecutorState");
 
-    EXECUTOR_INDEX.insert(id, state).expect("Executor ID should be unique but duplicated!");
+    EXECUTOR_INDEX.insert_sync(id, state).expect("Executor ID should be unique but duplicated!");
 
     std::thread::park_timeout(Duration::from_secs(3));
 }
@@ -1048,12 +1050,14 @@ fn monitor_loop() {
 
     let config = Config::global();
     let mut interval = config.monitor.interval();
+
+    let g = sdd::Guard::new();
     loop {
         if config.monitor.interval.changed() {
             interval = config.monitor.interval();
         }
 
-        if let Some(jh) = MONITOR_THREAD_JH.get() {
+        if let Some(jh) = MONITOR_THREAD_JH.get_ref(&g) {
             if jh.is_finished() {
                 start_monitor().unwrap();
                 return;
@@ -1127,10 +1131,11 @@ pub fn start_monitor() -> std::io::Result<()> {
     }
 
     let jh =
-        std::thread::Builder::new()
-        .name(String::from("ac-monitor"))
-        .spawn(monitor_loop)?;
-    let jh = scc2::ebr::Shared::new(jh);
+        sdd::Shared::new(
+            std::thread::Builder::new()
+            .name(String::from("ac-monitor"))
+            .spawn(monitor_loop)?
+        );
     MONITOR_THREAD_JH.set_shared(jh.clone());
     jh.thread().unpark();
 

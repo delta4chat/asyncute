@@ -21,12 +21,12 @@ use once_cell::sync::{Lazy, OnceCell};
 
 use portable_atomic::{
     *,
-    Ordering::Relaxed,
+    Ordering::*,
 };
 
 use num_traits::*;
 
-use scc2::ebr::AtomicOwned;
+use sdd::AtomicShared;
 
 // FIXME(hack) until the stabilize of #![feature(negative_impls)] 
 
@@ -205,24 +205,24 @@ macro_rules! atomic_checked_impl {
 
                     if val == ZERO {
                         if IS_ADD_OR_SUB {
-                            return Some(self.load(Relaxed));
+                            return Some(self.load(Acquire));
                         }
                         if IS_MUL {
-                            return Some(self.swap(ZERO, Relaxed));
+                            return Some(self.swap(ZERO, AcqRel));
                         }
                         if IS_DIV_OR_REM {
                             return None;
                         }
                     }
 
-                    let mut old = self.load(Relaxed);
+                    let mut old = self.load(Acquire);
                     let mut new;
                     loop {
                         new = old.$op(val)?;
                         match
                             self.compare_exchange(
                                 old,     new,
-                                Relaxed, Relaxed,
+                                AcqRel, Acquire,
                             )
                         {
                             Ok(prev) => {
@@ -272,6 +272,106 @@ atomic_checked_impls!(
     AtomicF32   = f32,
     AtomicF64   = f64,
 );
+
+/// Atomic one-element container helper backend by sdd::AtomicShared
+#[derive(Debug)] // avoid implement Clone to avoid confusion
+pub struct Atom<T> {
+    inner: AtomicShared<T>,
+}
+
+/// Atom wrapped by portable atomic Arc
+pub type ArcAtom<T> = Arc<Atom<T>>;
+
+impl<T> Deref for Atom<T> {
+    type Target = AtomicShared<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> Atom<T> {
+    /// create Atom from existing AtomicShared.
+    #[inline(always)]
+    pub const fn from(inner: AtomicShared<T>) -> Self {
+        Self { inner }
+    }
+
+    /// create Atom with no element. useful for constant context such as static.
+    #[inline(always)]
+    pub const fn null() -> Self {
+        Self::from(AtomicShared::null())
+    }
+
+    /// checks whether Atom is null.
+    #[inline(always)]
+    pub fn is_null(&self) -> bool {
+        self.inner.is_null(Acquire)
+    }
+
+    /// get Atom's element. return reference-counted.
+    #[inline(always)]
+    pub fn get(&self) -> Option<sdd::Shared<T>> {
+        let g = sdd::Guard::new();
+        self.inner.get_shared(Acquire, &g)
+    }
+
+    /// get Atom's element by reference using provided sdd Guard.
+    #[inline(always)]
+    pub fn get_ref<'g>(&self, guard: &'g sdd::Guard) -> Option<&'g T> {
+        self.inner.load(Acquire, guard).as_ref()
+    }
+
+    /// get and clone Atom's element.
+    #[inline(always)]
+    pub fn get_clone(&self) -> Option<T> where T: Clone {
+        let g = sdd::Guard::new();
+        self.get_ref(&g).map(T::clone)
+    }
+
+    /// set Atom's element by swapping but no return value (internally Drop if needs_drop)
+    #[inline(always)]
+    pub fn set_shared(&self, shared: sdd::Shared<T>) {
+        self.swap_shared(shared);
+    }
+
+    /// swapping between two element and returning old one.
+    #[inline(always)]
+    pub fn swap_shared(&self, shared: sdd::Shared<T>) -> Option<sdd::Shared<T>> {
+        self.inner.swap((Some(shared), sdd::Tag::None), AcqRel).0
+    }
+
+    /// take the element if any, leave null value.
+    #[inline(always)]
+    pub fn take(&self) -> Option<sdd::Shared<T>> {
+        self.inner.swap((None, sdd::Tag::None), AcqRel).0
+    }
+
+    /// take Shared ref-counted and calls T::clone for get cloned value.
+    #[inline(always)]
+    pub fn take_clone(&self) -> Option<T> where T: Clone {
+        self.take().map(|shared| { shared.as_ref().clone() })
+    }
+}
+impl<T: 'static> Atom<T> {
+    /// create Atom with provided value.
+    #[inline(always)]
+    pub fn new(value: T) -> Self {
+        Self::from(AtomicShared::new(value))
+    }
+
+    /// swap Atom with provided value, returning old one.
+    #[inline(always)]
+    pub fn swap(&self, value: T) -> Option<sdd::Shared<T>> {
+        self.swap_shared(sdd::Shared::new(value))
+    }
+
+    /// set Atom with provided value, calls swap but not return old value, so it's dropped internally.
+    #[inline(always)]
+    pub fn set(&self, value: T) {
+        self.swap(value);
+    }
+}
 
 /// check the equality of two byte slices in constant context.
 #[inline(always)]
@@ -403,10 +503,11 @@ pub mod injector {
         }
 
         fn pop(&self) -> Option<T> {
-            let mut ret = Injector::steal(self);
-            while ret.is_retry() {
+            let mut ret;
+            while { // do-while
                 ret = Injector::steal(self);
-            }
+                ret.is_retry()
+            } {}
             ret.success()
         }
     }
@@ -779,7 +880,7 @@ pub mod event_channel {
 /// the "unordered set" similar to scc::Bag but without the limit of maximum capacity.
 #[derive(Debug)]
 pub struct Storage<T, const N: usize> {
-    array: [AtomicOwned<T>; N],
+    array: [Atom<T>; N],
     len: AtomicUsize,
 
     has: [AtomicBool; N],
@@ -794,17 +895,16 @@ impl<T: 'static, const N: usize> Default for Storage<T, N> {
     }
 }
 
-impl<T: 'static, const N: usize> From<[AtomicOwned<T>; N]> for Storage<T, N> {
-    fn from(array: [AtomicOwned<T>; N]) -> Storage<T, N> {
-
+impl<T: 'static, const N: usize> From<[Atom<T>; N]> for Storage<T, N> {
+    fn from(array: [Atom<T>; N]) -> Storage<T, N> {
         let mut len = 0;
         let mut has = [false; N];
         let mut last_nothing = 0;
         let mut last_something = 0;
 
-        let g = scc2::ebr::Guard::new();
+        let g = sdd::Guard::new();
         for i in 0..N {
-            if array[i].load(Relaxed, &g).as_ref().is_some() {
+            if ! array[i].is_null() {
                 len += 1;
                 has[i] = true;
                 last_something = i;
@@ -830,7 +930,7 @@ impl<T: 'static, const N: usize> From<[AtomicOwned<T>; N]> for Storage<T, N> {
 
 impl<T: 'static, const N: usize> From<[T; N]> for Storage<T, N> {
     fn from(val: [T; N]) -> Storage<T, N> {
-        val.map(AtomicOwned::new).into()
+        val.map(Atom::new).into()
     }
 }
 
@@ -843,7 +943,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         assert!(N > 0);
 
         Self {
-            array: [const { AtomicOwned::null() }; N],
+            array: [const { Atom::null() }; N],
             len: AtomicUsize::new(0),
 
             has: [const { AtomicBool::new(false) }; N],
@@ -855,28 +955,28 @@ impl<T: 'static, const N: usize> Storage<T, N> {
     /// the current length of items in Storage.
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.len.load(Relaxed)
+        self.len.load(Acquire)
     }
 
     /// push item to Storage.
     #[inline(always)]
-    pub fn push(&self, item: T) -> Result<(), scc2::ebr::Owned<T>> {
-        self.push_owned(scc2::ebr::Owned::new(item))
+    pub fn push(&self, item: T) -> Result<(), sdd::Shared<T>> {
+        self.push_shared(sdd::Shared::new(item))
     }
 
-    /// push Owned-wrapped item to Storage.
+    /// push Shared-wrapped item to Storage.
     #[inline(always)]
-    pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) -> Result<(), scc2::ebr::Owned<T>> {
-        use scc2::ebr::{Ptr, Tag};
+    pub fn push_shared(&self, mut shared: sdd::Shared<T>) -> Result<(), sdd::Shared<T>> {
+        use sdd::{Ptr, Tag};
 
         if self.len() >= N {
-            return Err(owned);
+            return Err(shared);
         }
 
-        let g = scc2::ebr::Guard::new();
+        let g = sdd::Guard::new();
 
         let mut idx = [0usize; N];
-        idx[0] = self.last_nothing.load(Relaxed);
+        idx[0] = self.last_nothing.load(Acquire);
 
         let mut ii = 1;
         for i in 0..N {
@@ -888,52 +988,52 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         }
 
         for i in idx.into_iter() {
-            if self.has[i].load(Relaxed) {
+            if self.has[i].load(Acquire) {
                 continue;
             }
 
             match
                 self.array[i].compare_exchange(
                     Ptr::null(),
-                    (Some(owned), Tag::None),
-                    Relaxed,
-                    Relaxed,
+                    (Some(shared), Tag::None),
+                    AcqRel,
+                    Acquire,
                     &g
                 )
             {
                 Ok((prev, _new)) => {
                     assert!(prev.is_none());
 
-                    self.has[i].store(true, Relaxed);
-                    self.last_something.store(i, Relaxed);
+                    self.has[i].store(true, Release);
+                    self.last_something.store(i, Release);
 
                     self.len.checked_add(1);
                     return Ok(());
                 },
-                Err((o, cur)) => {
-                    owned = o.unwrap();
+                Err((s, cur)) => {
+                    shared = s.unwrap();
 
                     assert!(! cur.is_null());
-                    self.has[i].store(true, Relaxed);
+                    self.has[i].store(true, Release);
 
-                    self.last_something.store(i, Relaxed);
+                    self.last_something.store(i, Release);
                 }
             }
         }
 
-        Err(owned)
+        Err(shared)
     }
 
     /// pop item from Storage.
     #[inline(always)]
-    pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
+    pub fn pop(&self) -> Option<sdd::Shared<T>> {
         let len = self.len();
         if len == 0 {
             return None;
         }
 
         let mut idx = [0usize; N];
-        idx[0] = self.last_something.load(Relaxed);
+        idx[0] = self.last_something.load(Acquire);
 
         let mut ii = 1;
         for i in 0..N {
@@ -944,20 +1044,17 @@ impl<T: 'static, const N: usize> Storage<T, N> {
             ii += 1;
         }
 
-        let mut maybe_owned;
+        let mut maybe_shared;
         for i in idx.into_iter() {
-            if self.has[i].load(Relaxed) {
-                maybe_owned = self.array[i].swap(
-                    (None, scc2::ebr::Tag::None),
-                    Relaxed
-                ).0;
+            if self.has[i].load(Acquire) {
+                maybe_shared = self.array[i].take();
 
-                self.has[i].store(false, Relaxed);
-                self.last_nothing.store(i, Relaxed);
+                self.has[i].store(false, Release);
+                self.last_nothing.store(i, Release);
 
-                if let Some(owned) = maybe_owned {
+                if maybe_shared.is_some() {
                     self.len.checked_sub(1);
-                    return Some(owned);
+                    return maybe_shared;
                 }
             }
         }
@@ -968,7 +1065,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
 /// the multi [`Storage`]s backed by linked list.
 pub struct LinkedStorage<T, const N: usize> {
     inner: Storage<T, N>,
-    next: AtomicOwned<Self>,
+    next: AtomicShared<Self>,
 }
 
 impl<T: 'static, const N: usize> Default for LinkedStorage<T, N> {
@@ -979,10 +1076,7 @@ impl<T: 'static, const N: usize> Default for LinkedStorage<T, N> {
 
 impl<T: 'static, const N: usize> From<Storage<T, N>> for LinkedStorage<T, N> {
     fn from(inner: Storage<T, N>) -> LinkedStorage<T, N> {
-        Self {
-            inner,
-            next: AtomicOwned::null(),
-        }
+        Self::from(inner)
     }
 }
 
@@ -992,19 +1086,28 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     pub const fn new() -> Self {
         Self {
             inner: Storage::new(),
-            next: AtomicOwned::null(),
+            next: AtomicShared::null(),
+        }
+    }
+
+    /// create new [`LinkedStorage`] using provided Storage.
+    #[inline(always)]
+    pub const fn from(inner: Storage<T, N>) -> LinkedStorage<T, N> {
+        Self {
+            inner,
+            next: AtomicShared::null(),
         }
     }
 
     #[inline(always)]
-    fn try_next<'g>(&self, guard: &'g scc2::ebr::Guard) -> Option<&'g Self> {
-        self.next.load(Relaxed, guard).as_ref()
+    fn try_next<'g>(&self, guard: &'g sdd::Guard) -> Option<&'g Self> {
+        self.next.load(Acquire, guard).as_ref()
     }
 
-    /// get the next instance.
+    /// get or create the next instance.
     #[inline(always)]
-    fn next<'g>(&self, guard: &'g scc2::ebr::Guard) -> &'g Self {
-        let mut ptr = self.next.load(Relaxed, guard);
+    fn next<'g>(&self, guard: &'g sdd::Guard) -> &'g Self {
+        let mut ptr = self.next.load(Acquire, guard);
         let mut maybe_next;
         let mut new = None;
         loop {
@@ -1016,15 +1119,15 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
             assert!(ptr.is_null());
 
             if new.is_none() {
-                new = Some(scc2::ebr::Owned::new(Self::new()));
+                new = Some(sdd::Shared::new(Self::new()));
             }
 
             match
                 self.next.compare_exchange(
                     ptr,
-                    (new, scc2::ebr::Tag::None),
-                    Relaxed,
-                    Relaxed,
+                    (new, sdd::Tag::None),
+                    AcqRel,
+                    Acquire,
                     guard,
                 )
             {
@@ -1045,24 +1148,24 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     /// try push `T` to this instance. if full, push to the next instance.
     #[inline(always)]
     pub fn push(&self, item: T) {
-        self.push_owned(scc2::ebr::Owned::new(item))
+        self.push_shared(sdd::Shared::new(item))
     }
 
-    /// try push `Owned<T>` to this instance. if full, push to the next instance.
+    /// try push `Shared<T>` to this instance. if full, push to the next instance.
     #[inline(always)]
-    pub fn push_owned(&self, mut owned: scc2::ebr::Owned<T>) {
-        let g = scc2::ebr::Guard::new();
+    pub fn push_shared(&self, mut shared: sdd::Shared<T>) {
+        let g = sdd::Guard::new();
         let mut this = self;
-        while let Err(o) = this.inner.push_owned(owned) {
-            owned = o;
+        while let Err(s) = this.inner.push_shared(shared) {
+            shared = s;
             this = this.next(&g);
         }
     }
 
-    /// try pop `Owned<T>` from this instance. if empty, try looking for the next instance if any.
+    /// try pop `Shared<T>` from this instance. if empty, try looking for the next instance if any.
     #[inline(always)]
-    pub fn pop(&self) -> Option<scc2::ebr::Owned<T>> {
-        let g = scc2::ebr::Guard::new();
+    pub fn pop(&self) -> Option<sdd::Shared<T>> {
+        let g = sdd::Guard::new();
         let mut this = self;
         let mut maybe;
         loop {
@@ -1398,9 +1501,9 @@ impl AtomicDuration {
     /// set seconds + subseconds (by Duration) of this AtomicDuration.
     #[inline(always)]
     pub fn set(&self, d: Duration) -> &Self {
-        self.total_ns.store(d.as_nanos(), Relaxed);
+        self.total_ns.store(d.as_nanos(), Release);
         if let Some(ref changed) = self.changed {
-            changed.store(true, Relaxed);
+            changed.store(true, Release);
         }
         self
     }
@@ -1410,7 +1513,7 @@ impl AtomicDuration {
     pub fn add_secs(&self, s: u64) -> &Self {
         if self.total_ns.checked_add(Self::secs_to_nanos(s)).is_some() {
             if let Some(ref changed) = self.changed {
-                changed.store(true, Relaxed);
+                changed.store(true, Release);
             }
         }
         self
@@ -1422,7 +1525,7 @@ impl AtomicDuration {
     pub fn add_nanos(&self, n: u128) -> &Self {
         if self.total_ns.checked_add(n).is_some() {
             if let Some(ref changed) = self.changed {
-                changed.store(true, Relaxed);
+                changed.store(true, Release);
             }
         }
         self
@@ -1433,7 +1536,7 @@ impl AtomicDuration {
     pub fn add(&self, d: Duration) -> &Self {
         if self.total_ns.checked_add(d.as_nanos()).is_some() {
             if let Some(ref changed) = self.changed {
-                changed.store(true, Relaxed);
+                changed.store(true, Release);
             }
         }
         self
@@ -1444,7 +1547,7 @@ impl AtomicDuration {
     pub fn sub(&self, d: Duration) -> &Self {
         if self.total_ns.checked_sub(d.as_nanos()).is_some() {
             if let Some(ref changed) = self.changed {
-                changed.store(true, Relaxed);
+                changed.store(true, Release);
             }
         }
         self
@@ -1465,16 +1568,16 @@ impl AtomicDuration {
     /// get the Duration from this AtomicDuration.
     #[inline(always)]
     pub fn get(&self) -> Duration {
-        Self::duration_from_nanos(self.total_ns.load(Relaxed))
+        Self::duration_from_nanos(self.total_ns.load(Acquire))
     }
 
     /// checks whether the inner value changed since last call this.
     #[inline(always)]
     pub fn changed(&self) -> bool {
         if let Some(ref changed) = self.changed {
-            let is_changed = changed.load(Relaxed);
+            let is_changed = changed.load(Acquire);
             if is_changed {
-                changed.store(false, Relaxed);
+                changed.store(false, Release);
             }
             is_changed
         } else {
@@ -1567,7 +1670,7 @@ impl AtomicInstant {
     pub fn op(&self) -> u8 {
         let mut op;
         loop {
-            op = self.op.load(Relaxed);
+            op = self.op.load(Acquire);
             if op != Self::OP_PENDING {
                 return op;
             }
@@ -1579,9 +1682,9 @@ impl AtomicInstant {
     fn op_lock(&self) -> u8 {
         let mut op;
         loop {
-            op = self.op.load(Relaxed);
+            op = self.op.load(Acquire);
             if op != Self::OP_PENDING {
-                if self.op.compare_exchange(op, Self::OP_PENDING, Relaxed, Relaxed).is_ok() {
+                if self.op.compare_exchange(op, Self::OP_PENDING, AcqRel, Acquire).is_ok() {
                     return op;
                 }
             }
@@ -1604,7 +1707,7 @@ impl AtomicInstant {
                 self.offset.set(anchor - t);
                 Self::OP_SUB
             };
-        self.op.store(op, Relaxed);
+        self.op.store(op, Release);
 
         self
     }
@@ -1667,7 +1770,7 @@ impl AtomicInstant {
                 panic!("unexpected invalid value of self.op");
             }
         }
-        self.op.store(op, Relaxed);
+        self.op.store(op, Release);
 
         self
     }
@@ -1697,7 +1800,7 @@ impl AtomicInstant {
                 panic!("unexpected invalid value of self.op");
             }
         }
-        self.op.store(op, Relaxed);
+        self.op.store(op, Release);
 
         self
     }
@@ -1737,13 +1840,13 @@ impl AtomicIpv4Addr {
     /// get bits of AtomicIpv4Addr.
     #[inline(always)]
     pub fn get_bits(&self) -> u32 {
-        self.bits.load(Relaxed)
+        self.bits.load(Acquire)
     }
 
     /// set bits of AtomicIpv4Addr.
     #[inline(always)]
     pub fn set_bits(&self, bits: u32) -> &Self {
-        self.bits.store(bits, Relaxed);
+        self.bits.store(bits, Release);
         self
     }
 
@@ -1794,13 +1897,13 @@ impl AtomicIpv6Addr {
     /// get bits of AtomicIpv6Addr.
     #[inline(always)]
     pub fn get_bits(&self) -> u128 {
-        self.bits.load(Relaxed)
+        self.bits.load(Acquire)
     }
 
     /// set bits of AtomicIpv6Addr.
     #[inline(always)]
     pub fn set_bits(&self, bits: u128) -> &Self {
-        self.bits.store(bits, Relaxed);
+        self.bits.store(bits, Release);
         self
     }
 
@@ -1884,7 +1987,7 @@ impl AtomicIpAddr {
     /// the kind of IpAddr.
     #[inline(always)]
     pub fn kind(&self) -> u8 {
-        self.kind.load(Relaxed)
+        self.kind.load(Acquire)
     }
 
     /// whether is AtomicIpAddr is IPv4?
@@ -1902,7 +2005,7 @@ impl AtomicIpAddr {
     /// data part of AtomicIpAddr.
     #[inline(always)]
     fn data(&self) -> u128 {
-        self.data.load(Relaxed)
+        self.data.load(Acquire)
     }
 
     /// get IpAddr from AtomicIpAddr.
@@ -1936,12 +2039,12 @@ impl AtomicIpAddr {
     /// set IpAddr from AtomicIpAddr.
     #[inline(always)]
     pub fn set(&self, ip: IpAddr) -> &Self {
-        self.kind.store(Self::KIND_PENDING, Relaxed);
+        self.kind.store(Self::KIND_PENDING, Release);
 
         let (kind, data) = Self::ip2tuple(ip);
 
-        self.data.store(data, Relaxed);
-        self.kind.store(kind, Relaxed);
+        self.data.store(data, Release);
+        self.kind.store(kind, Release);
 
         self
     }
@@ -1987,13 +2090,13 @@ impl AtomicSocketAddr {
     /// get the port of this AtomicSocketAddr.
     #[inline(always)]
     pub fn port(&self) -> u16 {
-        self.port.load(Relaxed)
+        self.port.load(Acquire)
     }
 
     /// get SocketAddr from this AtomicSocketAddr.
     #[inline(always)]
     pub fn get(&self) -> SocketAddr {
-        while ! self.ready.load(Relaxed) {
+        while ! self.ready.load(Acquire) {
             // waiting...
         }
         SocketAddr::new(self.ip(), self.port())
@@ -2002,10 +2105,10 @@ impl AtomicSocketAddr {
     /// set SocketAddr from this AtomicSocketAddr.
     #[inline(always)]
     pub fn set(&self, addr: SocketAddr) -> &Self {
-        self.ready.store(false, Relaxed);
+        self.ready.store(false, Release);
         self.ip.set(addr.ip());
-        self.port.store(addr.port(), Relaxed);
-        self.ready.store(true, Relaxed);
+        self.port.store(addr.port(), Release);
+        self.ready.store(true, Release);
 
         self
     }
@@ -2207,13 +2310,13 @@ macro_rules! atomic_range_impl {
                 /// the start value of AtomicRange.
                 #[inline(always)]
                 pub fn start(&self) -> $num {
-                    self.start.load(Relaxed)
+                    self.start.load(Acquire)
                 }
 
                 /// the (excluded) end value of AtomicRange.
                 #[inline(always)]
                 pub fn end(&self) -> $num {
-                    self.end.load(Relaxed)
+                    self.end.load(Acquire)
                 }
 
                 /// get Range from this AtomicRange.
@@ -2234,7 +2337,7 @@ macro_rules! atomic_range_impl {
                             return false;
                         }
                     }
-                    self.start.store(val, Relaxed);
+                    self.start.store(val, Release);
                     true
                 }
 
@@ -2247,7 +2350,7 @@ macro_rules! atomic_range_impl {
                             return false;
                         }
                     }
-                    self.end.store(val, Relaxed);
+                    self.end.store(val, Release);
                     true
                 }
 
@@ -2259,8 +2362,8 @@ macro_rules! atomic_range_impl {
                             return false;
                         }
                     }
-                    self.start.store(val.start, Relaxed);
-                    self.end.store(val.end, Relaxed);
+                    self.start.store(val.start, Release);
+                    self.end.store(val.end, Release);
                     true
                 }
 
@@ -2357,7 +2460,7 @@ atomic_range_impl!(
 /// unused. "stable clock" that does not jump during system hibernate.
 #[derive(Debug)]
 pub struct StableClock {
-    started_elapsed: scc2::Atom<(Instant, AtomicDuration)>,
+    started_elapsed: Atom<(Instant, AtomicDuration)>,
     tick: Duration,
     join_handle: std::thread::JoinHandle<()>,
 }
@@ -2411,7 +2514,7 @@ impl StableClock {
     /// private new of StableClock.
     #[inline(always)]
     fn new(tick: Duration) -> Self {
-        let started_elapsed = scc2::Atom::new((Instant::now(), AtomicDuration::new(0, 0)));
+        let started_elapsed = Atom::new((Instant::now(), AtomicDuration::new(0, 0)));
         let join_handle = {
             let tick_ns = tick.as_nanos();
             std::thread::Builder::new()
@@ -2426,7 +2529,7 @@ impl StableClock {
                         se.1.add_nanos(tick_ns);
                         diff = this.time_diff();
                         if diff > tick && diff < max_diff {
-                            se = scc2::ebr::Shared::new((Instant::now(), AtomicDuration::new(0, 0)));
+                            se = sdd::Shared::new((Instant::now(), AtomicDuration::new(0, 0)));
                             this.started_elapsed.set_shared(se.clone());
                         }
                     }
