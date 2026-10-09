@@ -9,15 +9,15 @@ use sdd::{AtomicShared, Guard, Shared, Tag};
 use core::sync::atomic::Ordering::{AcqRel, Acquire};
 
 /// Atom is just a wrapper of [`sdd::AtomicShared`] for easy to use it.
-/// * this does not implements Clone due to AtomicShared::clone is copied just pointer but not the concurrent container itself. if you need to share it between multi threads, please Arc-wrapping it, or use `Box::leak` (static lifetime) to get a Clone-able reference.
+/// * this does not implements Clone due to AtomicShared::clone is copied just pointer but not the concurrent container itself. if you need to share it between multi threads, you can use sdd::Shared to wrapping it, or use `Box::leak` (static lifetime) to get a Clone-able reference.
 /// * for making this type can be constructed in const context, so it does not use Arc to implements Clone.
 pub struct Atom<T> {
     /// the wrapped inner AtomicShared.
     pub inner: AtomicShared<T>,
 }
 
-/// Atom wrapped by portable atomic Arc
-pub type ArcAtom<T> = Arc<Atom<T>>;
+/// Atom wrapped by sdd::Shared.
+pub type SharedAtom<T> = Shared<Atom<T>>;
 
 unsafe impl<T: Send> Send for Atom<T> {}
 unsafe impl<T: Sync> Sync for Atom<T> {}
@@ -215,6 +215,13 @@ impl<T> Default for Atom<T> {
     }
 }
 
+impl<T> From<Atom<T>> for SharedAtom<T> {
+    #[inline(always)]
+    fn from(val: Atom<T>) -> SharedAtom<T> {
+        val.clonable()
+    }
+}
+
 impl<T> Atom<T> {
     /// initialize Atom with no value.
     #[inline(always)]
@@ -222,6 +229,12 @@ impl<T> Atom<T> {
         Self {
             inner: AtomicShared::null(),
         }
+    }
+
+    /// convert this Atom to SharedAtom for cheap clone it.
+    #[inline(always)]
+    pub fn clonable(self) -> SharedAtom<T> {
+        unsafe { Shared::new_unchecked(self) }
     }
 
     /// Checks whether this Atom no value.
@@ -378,7 +391,7 @@ impl<T: 'static> Atom<T> {
         mut f: impl FnMut(Option<Shared<T>>)->Result<Option<Shared<T>>, E>
     ) -> Result<(Option<Shared<T>>, Option<Shared<T>>), E> {
         let guard = Guard::new();
-        let mut old_ptr = self.inner.load(AcqRel, &guard);
+        let mut old_ptr = self.inner.load(Acquire, &guard);
         let mut old;
         let mut new;
         loop {
@@ -413,8 +426,8 @@ mod test {
     }
 
     #[test]
-    fn concurrect() {
-        let a = Shared::new(Atom::new(19440u128));
+    fn concurrent() {
+        let a = Atom::new(19440u128).clonable();
 
         let mut thrs = Vec::new();
         for i in 0..10 {
@@ -429,8 +442,11 @@ mod test {
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                     a.update(|n| {
-                        eprintln!("n={n:?}");
-                        n.map(|n| { (*n) + i + 1 })
+                        eprintln!("n={:?}", n.as_deref());
+                        if false {
+                            return Err(());
+                        }
+                        Ok(n.map(|n| { (*n) + i + 1 }).map(sdd::Shared::new))
                     });
                 }
             });
