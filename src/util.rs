@@ -222,7 +222,7 @@ macro_rules! atomic_checked_impl {
                         match
                             self.compare_exchange(
                                 old,     new,
-                                AcqRel, Acquire,
+                                AcqRel,  Acquire,
                             )
                         {
                             Ok(prev) => {
@@ -1684,7 +1684,7 @@ impl AtomicInstant {
         loop {
             op = self.op.load(Acquire);
             if op != Self::OP_PENDING {
-                if self.op.compare_exchange(op, Self::OP_PENDING, AcqRel, Acquire).is_ok() {
+                if self.op.compare_exchange(op, Self::OP_PENDING, AcqRel, Relaxed).is_ok() {
                     return op;
                 }
             }

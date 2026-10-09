@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
-use std::time::Duration;
 use crate::tests::cpu::IpAddrExt;
-use crate::tests::Spawn;
+use crate::tests::*;
 
 type Ops = u128;
 
-/// benchmark for CPU-intensive (CPU-bound) tasks.
+/// benchmark for I/O-intensive (I/O-bound) tasks.
 pub struct IO {
     tasks: u8,
     spawn: Option<Spawn>,
@@ -64,7 +61,7 @@ impl IO {
     #[inline(always)]
     pub fn xor_echo_service(&mut self) -> (Ops, f64) {
         use smol::io::{AsyncReadExt, AsyncWriteExt};
-        use portable_atomic::{AtomicBool, Ordering::Relaxed};
+        use portable_atomic::{AtomicBool, Ordering::Acquire};
         use smoltimeout::TimeoutExt;
 
         self.used_mut();
@@ -135,12 +132,12 @@ impl IO {
                     ops += 1;
                 }
                 ops_tx.send((ops, elapsed)).unwrap();
-                accept.store(false, Relaxed);
+                accept.store(false, Release);
             } };
 
-            while accept.load(Relaxed) {
+            while accept.load(Acquire) {
                 if let Some(Ok((conn, peer))) = tcp.accept().timeout(Duration::from_secs(1)).await {
-                    if accept.load(Relaxed) {
+                    if accept.load(Acquire) {
                         (spawn)(Box::pin(handler(conn)));
                     }
                 }

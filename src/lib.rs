@@ -202,7 +202,7 @@ fn get_runinfo_rx() -> &'static Receiver<RunInfo> {
 pub fn cpu_count() -> usize {
     static CPUS: AtomicUsize = AtomicUsize::new(0);
 
-    let mut count = CPUS.load(Relaxed);
+    let mut count = CPUS.load(Acquire);
     if count > 0 {
         return count;
     }
@@ -210,7 +210,7 @@ pub fn cpu_count() -> usize {
     if count == 0 {
         count = 1;
     }
-    CPUS.store(count, Relaxed);
+    CPUS.store(count, Release);
     count
 }
 
@@ -268,14 +268,14 @@ impl RunnableProfile {
         self.last_update.set(Instant::now());
 
         if elapsed_secs == 0.0 {
-            self.run_frequency.store(0.0, Relaxed);
-            self.queue_frequency.store(0.0, Relaxed);
+            self.run_frequency.store(0.0, Release);
+            self.queue_frequency.store(0.0, Release);
         } else {
             let runs = self.run_count() as f64;
-            self.run_frequency.store(runs / elapsed_secs, Relaxed);
+            self.run_frequency.store(runs / elapsed_secs, Release);
 
             let queues = self.queue_count() as f64;
-            self.queue_frequency.store(queues / elapsed_secs, Relaxed);
+            self.queue_frequency.store(queues / elapsed_secs, Release);
         }
 
         true
@@ -284,31 +284,31 @@ impl RunnableProfile {
     /// all "alive" Runnable that is not terminated.
     #[inline(always)]
     pub fn alive_count(&self) -> u64 {
-        self.alive_count.load(Relaxed)
+        self.alive_count.load(Acquire)
     }
 
     /// all handled Runnable (by running it)
     #[inline(always)]
     pub fn run_count(&self) -> u64 {
-        self.run_count.load(Relaxed)
+        self.run_count.load(Acquire)
     }
 
     /// how many Runnable ran within one second (in average)
     #[inline(always)]
     pub fn run_frequency(&self) -> f64 {
-        self.run_frequency.load(Relaxed)
+        self.run_frequency.load(Acquire)
     }
 
     /// all scheduled Runnable (by queues to crossbeam-channel)
     #[inline(always)]
     pub fn queue_count(&self) -> u64 {
-        self.queue_count.load(Relaxed)
+        self.queue_count.load(Acquire)
     }
 
     /// how many Runnable queues within one second (in average)
     #[inline(always)]
     pub fn queue_frequency(&self) -> f64 {
-        self.queue_frequency.load(Relaxed)
+        self.queue_frequency.load(Acquire)
     }
 }
 
@@ -337,25 +337,25 @@ impl FutureProfile {
     /// how many futures alive currently?
     #[inline(always)]
     pub fn alive_count(&self) -> u64 {
-        self.alive_count.load(Relaxed)
+        self.alive_count.load(Acquire)
     }
 
     /// total numer of Future::poll() calls. 
     #[inline(always)]
     pub fn poll_count(&self) -> u64 {
-        self.poll_count.load(Relaxed)
+        self.poll_count.load(Acquire)
     }
 
     /// total numer of Poll::Pending results.
     #[inline(always)]
     pub fn pending_count(&self) -> u64 {
-        self.pending_count.load(Relaxed)
+        self.pending_count.load(Acquire)
     }
 
     /// total numer of Poll::Ready results.
     #[inline(always)]
     pub fn ready_count(&self) -> u64 {
-        self.ready_count.load(Relaxed)
+        self.ready_count.load(Acquire)
     }
 }
 
@@ -445,7 +445,7 @@ impl ProfileConfig {
         }
 
         Profile::global().started.set(Instant::now());
-        self.enabled.store(true, Relaxed);
+        self.enabled.store(true, Release);
 
         true
     }
@@ -454,13 +454,13 @@ impl ProfileConfig {
     /// to disable (stop) the profile.
     #[inline(always)]
     pub fn disable(&self) {
-        self.enabled.store(false, Relaxed);
+        self.enabled.store(false, Release);
     }
 
     /// check whether the profile is enabled.
     #[inline(always)]
     pub fn is_enabled(&self) -> bool {
-        self.enabled.load(Relaxed)
+        self.enabled.load(Acquire)
     }
 }
 
@@ -565,7 +565,7 @@ impl ExecutorSpawnPolicy {
     /// load from AtomicU8.
     #[inline(always)]
     pub fn from_atomic(atom: &AtomicU8) -> Option<Self> {
-        Self::new(atom.load(Relaxed))
+        Self::new(atom.load(Acquire))
     }
 
     /// spawn one exitable executor if allowed.
@@ -605,7 +605,7 @@ impl ExecutorSpawnPolicy {
             return false;
         }
 
-        let overload_threshold = ExecutorConfig::global().overload_threshold.load(Relaxed);
+        let overload_threshold = ExecutorConfig::global().overload_threshold.load(Acquire);
 
         let mut all_overload = true;
         for (id, load) in status.work_load.iter() {
@@ -718,13 +718,13 @@ impl ExecutorConfig {
     /// set the executor spawn policy.
     #[inline(always)]
     pub fn set_spawn_policy(&self, policy: ExecutorSpawnPolicy) {
-        self.spawn_policy.store(policy.value(), Relaxed);
+        self.spawn_policy.store(policy.value(), Release);
     }
 
     /// get the threshold of overload.
     #[inline(always)]
     pub fn overload_threshold(&self) -> f64 {
-        let val = self.overload_threshold.load(Relaxed);
+        let val = self.overload_threshold.load(Acquire);
         assert!(val >= 0.0 && val <= 1.0);
         val
     }
@@ -742,14 +742,14 @@ impl ExecutorConfig {
             return false;
         }
 
-        self.overload_threshold.store(val, Relaxed);
+        self.overload_threshold.store(val, Release);
         true
     }
 
     /// get the threshold of standby.
     #[inline(always)]
     pub fn standby_threshold(&self) -> f64 {
-        let val = self.standby_threshold.load(Relaxed);
+        let val = self.standby_threshold.load(Acquire);
         assert!(val >= 0.0 && val <= 1.0);
         val
     }
@@ -767,7 +767,7 @@ impl ExecutorConfig {
             return false;
         }
 
-        self.overload_threshold.store(val, Relaxed);
+        self.overload_threshold.store(val, Release);
         true
     }
 }
@@ -1118,9 +1118,9 @@ pub fn start_monitor() -> std::io::Result<()> {
     static STARTING: AtomicBool = AtomicBool::new(false);
 
     let mut defer = Defer::new(|| {
-        let _ = STARTING.compare_exchange(true, false, Relaxed, Relaxed);
+        let _ = STARTING.compare_exchange(true, false, AcqRel, Relaxed);
     });
-    if STARTING.compare_exchange(false, true, Relaxed, Relaxed).is_err() {
+    if STARTING.compare_exchange(false, true, AcqRel, Relaxed).is_err() {
         defer.cancel();
         return Err(std::io::Error::new(std::io::ErrorKind::ResourceBusy, "monitor is starting by another caller"));
     }

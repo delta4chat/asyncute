@@ -8,6 +8,8 @@ mod test;
 use core::{
     future::Future,
     pin::Pin,
+    time::Duration,
+    sync::atomic::Ordering::*,
 };
 
 pub type Spawn = Arc<dyn Fn(Pin<Box<dyn Future<Output=()> + Send + 'static>>) + Send + Sync>;

@@ -136,7 +136,7 @@ fn test_linked_storage() {
         ls.push(i);
     }
 
-    let g = scc2::ebr::Guard::new();
+    let g = sdd::Guard::new();
     let mut v = Vec::new();
     for _ in 1..=103u8 {
         assert!(dbg!(ls.pop().map(|x| { let x = x.get_guarded_ref(&g); v.push(*x); x })).is_some());

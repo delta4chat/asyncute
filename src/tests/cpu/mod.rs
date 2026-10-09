@@ -1,5 +1,5 @@
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use crate::tests::*;
 
 fn find_primes_in_worse_method(mut cb: impl FnMut(u128) -> bool) {
     let mut n: u128 = 1;

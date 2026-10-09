@@ -6,10 +6,7 @@ use std::{
     time::Instant,
 };
 
-use portable_atomic::{
-    AtomicBool,
-    Ordering::Relaxed,
-};
+use portable_atomic::AtomicBool;
 
 use once_cell::sync::OnceCell;
 
@@ -58,7 +55,7 @@ impl ExecutorState {
     /// check if this executor is working (by running Runnable)
     #[inline(always)]
     pub fn is_working(&self) -> bool {
-        self.working.load(Relaxed)
+        self.working.load(Acquire)
     }
 
     /// returns range within 0.0 ~ 1.0 (f64).
@@ -77,7 +74,7 @@ impl ExecutorState {
     #[inline(always)]
     pub fn exit(&self) -> Result<(), &'static str> {
         if self.exitable {
-            self.please_exit.store(true, Relaxed);
+            self.please_exit.store(true, Release);
             Ok(())
         } else {
             Err("executor is not exitable!")
@@ -125,7 +122,7 @@ impl Executor {
         let taskinfo = runinfo.runnable.metadata().clone();
 
         if ! bulk {
-            self.state.working.store(true, Relaxed);
+            self.state.working.store(true, Release);
         }
         let t = Instant::now();
         match std::panic::catch_unwind(move || { runinfo.runnable.run() }) {
@@ -166,7 +163,7 @@ impl Executor {
         }
         let t = t.elapsed();
         if ! bulk {
-            self.state.working.store(false, Relaxed);
+            self.state.working.store(false, Release);
         }
 
         taskinfo.0.run_count.checked_add(1);
@@ -189,7 +186,7 @@ impl Executor {
         let rx = &self.runinfo_rx;
 
         let _defer = Defer::new(|| {
-            self.state.working.store(false, Relaxed);
+            self.state.working.store(false, Release);
         });
 
         let exitable = self.state.exitable;
@@ -212,7 +209,7 @@ impl Executor {
                     Some(runinfo) => {
                         if ! worked {
                             worked = true;
-                            self.state.working.store(true, Relaxed);
+                            self.state.working.store(true, Release);
                         }
 
                         self.run_one(runinfo, true);
@@ -238,7 +235,7 @@ impl Executor {
 
                         if ! worked {
                             worked = true;
-                            self.state.working.store(true, Relaxed);
+                            self.state.working.store(true, Release);
                         }
 
                         self.run_one(runinfo, true);
@@ -283,7 +280,7 @@ impl Executor {
                 #[cfg(test)]
                 log::trace!("{idc} worked");
 
-                self.state.working.store(false, Relaxed);
+                self.state.working.store(false, Release);
                 if exitable {
                     t = Instant::now();
                 }
@@ -358,7 +355,7 @@ impl Executor {
                 if self.state.working_ratio() < execonfig.standby_threshold() {
                     break;
                 }
-                if self.state.please_exit.load(Relaxed) {
+                if self.state.please_exit.load(Acquire) {
                     break;
                 }
             }
