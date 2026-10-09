@@ -1,6 +1,7 @@
 #![doc = include_str!("README.md")]
 
-#![forbid(unsafe_code)]
+// TODO change it to forbid after moving something to new crate
+#![deny(unsafe_code)]
 
 //#![cfg_attr(any(nightly, feature="nightly"), feature(doc_auto_cfg))]
 
@@ -146,7 +147,7 @@ pub type TaskId = u128;
 static EXECUTOR_INDEX: Lazy<scc::HashIndex<ExecutorId, Arc<ExecutorState>, ahash::RandomState>> = Lazy::new(Default::default);
 
 /// the JoinHandle of monitor thread
-static MONITOR_THREAD_JH: Atom<std::thread::JoinHandle<()>> = Atom::null();
+static MONITOR_THREAD_JH: Atom<std::thread::JoinHandle<()>> = Atom::init();
 
 /// the Runnable + ScheduleInfo from async-task
 pub(crate) struct RunInfo {

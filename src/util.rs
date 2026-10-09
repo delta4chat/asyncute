@@ -2,7 +2,7 @@
 
 pub use core::marker::{PhantomData, PhantomPinned};
 
-use crate::*;
+//use crate::*;
 
 use core::{
     ops::{Range, Deref, DerefMut},
@@ -26,7 +26,8 @@ use portable_atomic::{
 
 use num_traits::*;
 
-use sdd::AtomicShared;
+pub mod atom;
+pub use atom::*;
 
 // FIXME(hack) until the stabilize of #![feature(negative_impls)] 
 
@@ -272,106 +273,6 @@ atomic_checked_impls!(
     AtomicF32   = f32,
     AtomicF64   = f64,
 );
-
-/// Atomic one-element container helper backend by sdd::AtomicShared
-#[derive(Debug)] // avoid implement Clone to avoid confusion
-pub struct Atom<T> {
-    inner: AtomicShared<T>,
-}
-
-/// Atom wrapped by portable atomic Arc
-pub type ArcAtom<T> = Arc<Atom<T>>;
-
-impl<T> Deref for Atom<T> {
-    type Target = AtomicShared<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T> Atom<T> {
-    /// create Atom from existing AtomicShared.
-    #[inline(always)]
-    pub const fn from(inner: AtomicShared<T>) -> Self {
-        Self { inner }
-    }
-
-    /// create Atom with no element. useful for constant context such as static.
-    #[inline(always)]
-    pub const fn null() -> Self {
-        Self::from(AtomicShared::null())
-    }
-
-    /// checks whether Atom is null.
-    #[inline(always)]
-    pub fn is_null(&self) -> bool {
-        self.inner.is_null(Acquire)
-    }
-
-    /// get Atom's element. return reference-counted.
-    #[inline(always)]
-    pub fn get(&self) -> Option<sdd::Shared<T>> {
-        let g = sdd::Guard::new();
-        self.inner.get_shared(Acquire, &g)
-    }
-
-    /// get Atom's element by reference using provided sdd Guard.
-    #[inline(always)]
-    pub fn get_ref<'g>(&self, guard: &'g sdd::Guard) -> Option<&'g T> {
-        self.inner.load(Acquire, guard).as_ref()
-    }
-
-    /// get and clone Atom's element.
-    #[inline(always)]
-    pub fn get_clone(&self) -> Option<T> where T: Clone {
-        let g = sdd::Guard::new();
-        self.get_ref(&g).map(T::clone)
-    }
-
-    /// set Atom's element by swapping but no return value (internally Drop if needs_drop)
-    #[inline(always)]
-    pub fn set_shared(&self, shared: sdd::Shared<T>) {
-        self.swap_shared(shared);
-    }
-
-    /// swapping between two element and returning old one.
-    #[inline(always)]
-    pub fn swap_shared(&self, shared: sdd::Shared<T>) -> Option<sdd::Shared<T>> {
-        self.inner.swap((Some(shared), sdd::Tag::None), AcqRel).0
-    }
-
-    /// take the element if any, leave null value.
-    #[inline(always)]
-    pub fn take(&self) -> Option<sdd::Shared<T>> {
-        self.inner.swap((None, sdd::Tag::None), AcqRel).0
-    }
-
-    /// take Shared ref-counted and calls T::clone for get cloned value.
-    #[inline(always)]
-    pub fn take_clone(&self) -> Option<T> where T: Clone {
-        self.take().map(|shared| { shared.as_ref().clone() })
-    }
-}
-impl<T: 'static> Atom<T> {
-    /// create Atom with provided value.
-    #[inline(always)]
-    pub fn new(value: T) -> Self {
-        Self::from(AtomicShared::new(value))
-    }
-
-    /// swap Atom with provided value, returning old one.
-    #[inline(always)]
-    pub fn swap(&self, value: T) -> Option<sdd::Shared<T>> {
-        self.swap_shared(sdd::Shared::new(value))
-    }
-
-    /// set Atom with provided value, calls swap but not return old value, so it's dropped internally.
-    #[inline(always)]
-    pub fn set(&self, value: T) {
-        self.swap(value);
-    }
-}
 
 /// check the equality of two byte slices in constant context.
 #[inline(always)]
@@ -902,9 +803,8 @@ impl<T: 'static, const N: usize> From<[Atom<T>; N]> for Storage<T, N> {
         let mut last_nothing = 0;
         let mut last_something = 0;
 
-        let g = sdd::Guard::new();
         for i in 0..N {
-            if ! array[i].is_null() {
+            if array[i].is_some() {
                 len += 1;
                 has[i] = true;
                 last_something = i;
@@ -943,7 +843,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
         assert!(N > 0);
 
         Self {
-            array: [const { Atom::null() }; N],
+            array: [const { Atom::init() }; N],
             len: AtomicUsize::new(0),
 
             has: [const { AtomicBool::new(false) }; N],
@@ -993,7 +893,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
             }
 
             match
-                self.array[i].compare_exchange(
+                self.array[i].inner.compare_exchange(
                     Ptr::null(),
                     (Some(shared), Tag::None),
                     AcqRel,
@@ -1065,7 +965,7 @@ impl<T: 'static, const N: usize> Storage<T, N> {
 /// the multi [`Storage`]s backed by linked list.
 pub struct LinkedStorage<T, const N: usize> {
     inner: Storage<T, N>,
-    next: AtomicShared<Self>,
+    next: Atom<Self>,
 }
 
 impl<T: 'static, const N: usize> Default for LinkedStorage<T, N> {
@@ -1086,7 +986,7 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     pub const fn new() -> Self {
         Self {
             inner: Storage::new(),
-            next: AtomicShared::null(),
+            next: Atom::init(),
         }
     }
 
@@ -1095,19 +995,19 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
     pub const fn from(inner: Storage<T, N>) -> LinkedStorage<T, N> {
         Self {
             inner,
-            next: AtomicShared::null(),
+            next: Atom::init(),
         }
     }
 
     #[inline(always)]
     fn try_next<'g>(&self, guard: &'g sdd::Guard) -> Option<&'g Self> {
-        self.next.load(Acquire, guard).as_ref()
+        self.next.get_ref(guard)
     }
 
     /// get or create the next instance.
     #[inline(always)]
     fn next<'g>(&self, guard: &'g sdd::Guard) -> &'g Self {
-        let mut ptr = self.next.load(Acquire, guard);
+        let mut ptr = self.next.inner.load(Acquire, guard);
         let mut maybe_next;
         let mut new = None;
         loop {
@@ -1123,7 +1023,7 @@ impl<T: 'static, const N: usize> LinkedStorage<T, N> {
             }
 
             match
-                self.next.compare_exchange(
+                self.next.inner.compare_exchange(
                     ptr,
                     (new, sdd::Tag::None),
                     AcqRel,
