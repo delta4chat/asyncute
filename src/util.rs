@@ -419,6 +419,8 @@ pub mod injector {
 pub mod event_channel {
     use super::*;
 
+    use crate::Arc;
+
     use event_listener::{Event, Listener, listener};
 
     /// the private Inner of InjectorChannel
