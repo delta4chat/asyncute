@@ -50,7 +50,7 @@ use crate::util::injector::{InjectorChannel, Sender, Receiver};
 #[cfg(feature="std-mpmc")]
 use std::sync::mpmc::{Sender, Receiver};
 
-use async_task::ScheduleInfo;
+pub use async_task::ScheduleInfo;
 
 use portable_atomic::{
     AtomicBool,
@@ -60,8 +60,14 @@ use portable_atomic::{
     AtomicF64,
     Ordering::*,
 };
-use portable_atomic_util::Arc;
-use once_cell::sync::Lazy;
+pub use portable_atomic_util::Arc;
+pub use once_cell::sync::Lazy;
+
+pub use {
+    scc, sdd,
+    portable_atomic, portable_atomic_util,
+    async_task,
+};
 
 /// the inner of TaskInfo.
 #[derive(Debug)]

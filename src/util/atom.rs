@@ -2,8 +2,6 @@
 
 #![allow(unsafe_code)]
 
-use crate::Arc;
-
 use sdd::{AtomicShared, Guard, Shared, Tag};
 
 use core::sync::atomic::Ordering::{AcqRel, Acquire};
