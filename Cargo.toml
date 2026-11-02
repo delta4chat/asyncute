@@ -1,6 +1,6 @@
 [package]
 name = "asyncute"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "asyncute (async execute) can execute async futures globally without per-executor queues."
 license = "GPL-3.0"
@@ -34,7 +34,7 @@ scc = "3.8.8"
 sdd = "4.8.11"
 
 num-traits = "0.2.19"
-log = { version = "0.4.34", features = ["std"] }
+log = { version = "0.4.35", features = ["std"] }
 once_cell = { version = "1.21.4", features = ["parking_lot", "portable-atomic"] }
 
 portable-atomic = { version = "1.15.0", features = ["float", "std"] }
