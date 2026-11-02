@@ -1325,21 +1325,24 @@ impl From<AtomicDuration> for Duration {
 
 impl AtomicDuration {
     /// one second is equal to one billion nanoseconds.
-    const NANOS_PER_SEC: u128 = 1_000_000_000;
+    pub const NANOS_PER_SEC: u128 = 1_000_000_000;
 
     /// convert from seconds to nanoseconds.
     #[inline(always)]
-    const fn secs_to_nanos(s: u64) -> u128 {
+    pub const fn secs_to_nanos(s: u64) -> u128 {
         // this is safe due to (18446744073709551615_000_000_000 < u128::MAX)
         (s as u128) * Self::NANOS_PER_SEC
     }
 
     /// u128 nanoseconds version of [core::time::Duration::from_nanos](https://doc.rust-lang.org/1.84.1/src/core/time.rs.html#318-326)
     #[inline(always)]
-    const fn duration_from_nanos(nanos: u128) -> Duration {
-        let secs = (nanos / Self::NANOS_PER_SEC) as u64;
+    pub const fn duration_from_nanos(nanos: u128) -> Duration {
+        let secs = nanos / Self::NANOS_PER_SEC;
+        if secs > (u64::MAX as u128) {
+            panic!("seconds part of nanos is overflow u64");
+        }
         let subsec_nanos = (nanos % Self::NANOS_PER_SEC) as u32;
-        Duration::new(secs, subsec_nanos)
+        Duration::new(secs as u64, subsec_nanos)
     }
 
     /// return the zero (default) value of AtomicDuration.
@@ -1486,6 +1489,11 @@ impl AtomicDuration {
             panic!("trace change is not enabled!");
         }
     }
+}
+
+/// alias to [AtomicDuration::duration_from_nanos]
+pub const fn duration_from_nanos(nanos: u128) -> Duration {
+    AtomicDuration::duration_from_nanos(nanos)
 }
 
 /// the atomic version of [`Instant`].
